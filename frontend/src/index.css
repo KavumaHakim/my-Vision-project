@@ -20,7 +20,7 @@ body {
 }
 
 .app {
-  max-width: 1400px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 32px 20px 48px;
 }
@@ -66,7 +66,7 @@ body {
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 16px;
 }
 
@@ -79,7 +79,7 @@ body {
 }
 
 .video-card {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .card h2 {
@@ -153,9 +153,73 @@ body {
   cursor: pointer;
 }
 
+.face-action-button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(228, 106, 58, 0.2);
+}
+
+.face-action-button:hover {
+  opacity: 0.92;
+}
+
 .face-panel {
   display: grid;
   gap: 16px;
+}
+
+.emotion-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.emotion-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.face-toggle {
+  display: grid;
+  gap: 6px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.tab-button {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  padding: 10px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 8px 18px rgba(228, 106, 58, 0.15);
 }
 
 .face-block {
@@ -164,7 +228,7 @@ body {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: #faf7f2;
+  background: #fff7ef;
 }
 
 .face-row {
@@ -200,6 +264,11 @@ body {
 
 .controls button:hover {
   opacity: 0.9;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .muted {

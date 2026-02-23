@@ -7,13 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import cv2
 import numpy as np
+import requests
 
 from camera import Camera
 from config import load_settings
 from detector import Detector
 from face_db import FaceDB
 from face_service import FaceService
-from scheduler import CaptureService
+from scheduler import CaptureService, FaceRecognitionService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -34,9 +35,11 @@ async def lifespan(app: FastAPI):
         raise
     detector.start(camera.read)
     capture_service.start()
+    face_recognition_service.start()
     try:
         yield
     finally:
+        face_recognition_service.stop()
         capture_service.stop()
         detector.stop()
         camera.close()
@@ -66,6 +69,14 @@ capture_service = CaptureService(
     interval_s=settings.image_capture_interval,
     cooldown_s=settings.upload_cooldown_seconds,
     capture_dir=settings.capture_dir,
+)
+
+face_recognition_service = FaceRecognitionService(
+    detector=detector,
+    face_service=face_service,
+    face_db=face_db,
+    threshold=settings.face_match_threshold,
+    interval_s=settings.face_recognition_interval,
 )
 
 
@@ -135,6 +146,13 @@ async def _load_image(source: str, file: UploadFile | None) -> np.ndarray:
     return img
 
 
+def _encode_jpeg(frame: np.ndarray) -> bytes:
+    ok, encoded = cv2.imencode(".jpg", frame)
+    if not ok:
+        raise HTTPException(status_code=500, detail="encode_failed")
+    return encoded.tobytes()
+
+
 @app.get("/faces")
 async def list_faces():
     return JSONResponse({"ok": True, "faces": face_db.list_names()})
@@ -177,3 +195,54 @@ async def face_recognize(
             "meta": meta,
         }
     )
+
+
+@app.get("/face/last")
+async def face_last():
+    return JSONResponse({"ok": True, "result": face_recognition_service.get_last()})
+
+
+@app.post("/emotion")
+async def emotion_detect(
+    source: str = Form("upload"),
+    file: UploadFile | None = File(None),
+):
+    if not settings.hf_token:
+        raise HTTPException(status_code=500, detail="hf_token_missing")
+    if source not in {"upload", "live"}:
+        raise HTTPException(status_code=400, detail="invalid_source")
+
+    if source == "live":
+        frame = camera.read()
+        if frame is None:
+            raise HTTPException(status_code=503, detail="camera_unavailable")
+        data = _encode_jpeg(frame)
+    else:
+        if file is None:
+            raise HTTPException(status_code=400, detail="image_required")
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="invalid_image")
+
+    headers = {
+        "Authorization": f"Bearer {settings.hf_token}",
+        "Content-Type": "image/jpeg",
+    }
+    try:
+        resp = requests.post(
+            settings.hf_emotion_url,
+            headers=headers,
+            data=data,
+            timeout=30,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=502, detail="hf_request_failed")
+
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="hf_invalid_response")
+
+    if resp.status_code >= 400:
+        return JSONResponse({"ok": False, "error": payload}, status_code=resp.status_code)
+    return JSONResponse({"ok": True, "result": payload})

@@ -34,4 +34,4 @@ class SupabaseUploader:
 def build_storage_path(filename: str) -> str:
     ts = now_utc()
     folder = ts.strftime("%Y/%m/%d")
-    return f"captures/{folder}/{filename}"
+    return f"{folder}/{filename}"

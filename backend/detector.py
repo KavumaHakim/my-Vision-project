@@ -48,6 +48,10 @@ class Detector:
         with self._lock:
             return self._latest_ts, list(self._latest_detections)
 
+    def has_label(self, label: str) -> bool:
+        with self._lock:
+            return any(det.get("label") == label for det in self._latest_detections)
+
     def get_latest_frame(self, annotated: bool = True):
         with self._lock:
             frame = self._latest_frame if annotated else self._latest_raw
