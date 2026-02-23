@@ -18,6 +18,9 @@ class Settings:
     capture_dir: str
     camera_index: int
     stream_fps: int
+    face_db_path: str
+    face_model_name: str
+    face_match_threshold: float
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -38,6 +41,9 @@ def load_settings() -> Settings:
     capture_dir = os.getenv("CAPTURE_DIR", "captures").strip()
     camera_index = int(os.getenv("CAMERA_INDEX", "0").strip())
     stream_fps = int(os.getenv("STREAM_FPS", "10").strip())
+    face_db_path = os.getenv("FACE_DB_PATH", "faces.db").strip()
+    face_model_name = os.getenv("FACE_MODEL_NAME", "buffalo_l").strip()
+    face_match_threshold = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45").strip())
 
     return Settings(
         model_path=model_path,
@@ -50,4 +56,7 @@ def load_settings() -> Settings:
         capture_dir=capture_dir,
         camera_index=camera_index,
         stream_fps=stream_fps,
+        face_db_path=face_db_path,
+        face_model_name=face_model_name,
+        face_match_threshold=face_match_threshold,
     )

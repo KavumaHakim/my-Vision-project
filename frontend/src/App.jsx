@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import VideoStream from "./components/VideoStream.jsx";
 import DetectionPanel from "./components/DetectionPanel.jsx";
 import Controls from "./components/Controls.jsx";
+import FacePanel from "./components/FacePanel.jsx";
 import { getHealth } from "./api.js";
 
 export default function App() {
@@ -48,7 +49,7 @@ export default function App() {
       </header>
 
       <main className="grid">
-        <section className="card">
+        <section className="card video-card">
           <h2>Live Stream</h2>
           <VideoStream />
         </section>
@@ -59,6 +60,10 @@ export default function App() {
         <section className="card">
           <h2>Controls</h2>
           <Controls />
+        </section>
+        <section className="card">
+          <h2>Face Registration & Recognition</h2>
+          <FacePanel />
         </section>
       </main>
     </div>
