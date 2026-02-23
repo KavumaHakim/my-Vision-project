@@ -24,6 +24,7 @@ class Settings:
     face_recognition_interval: int
     hf_token: str | None
     hf_emotion_url: str
+    face_unknown_threshold: float
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -48,6 +49,7 @@ def load_settings() -> Settings:
     face_model_name = os.getenv("FACE_MODEL_NAME", "buffalo_l").strip()
     face_match_threshold = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45").strip())
     face_recognition_interval = int(os.getenv("FACE_RECOGNITION_INTERVAL", "10").strip())
+    face_unknown_threshold = float(os.getenv("FACE_UNKNOWN_THRESHOLD", "0.5").strip())
     hf_token = os.getenv("HF_TOKEN", "").strip() or None
     hf_emotion_url = os.getenv(
         "HF_EMOTION_URL",
@@ -69,6 +71,7 @@ def load_settings() -> Settings:
         face_model_name=face_model_name,
         face_match_threshold=face_match_threshold,
         face_recognition_interval=face_recognition_interval,
+        face_unknown_threshold=face_unknown_threshold,
         hf_token=hf_token,
         hf_emotion_url=hf_emotion_url,
     )

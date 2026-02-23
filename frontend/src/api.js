@@ -49,6 +49,13 @@ export async function emotionUpload(file) {
   return data;
 }
 
+export async function getTimeline(limit = 100) {
+  const res = await fetch(`${BASE}/timeline?limit=${limit}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "timeline_failed");
+  return data;
+}
+
 export async function faceRegisterLive(name) {
   const form = new FormData();
   form.append("name", name);

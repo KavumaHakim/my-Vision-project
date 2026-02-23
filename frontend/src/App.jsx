@@ -4,6 +4,7 @@ import DetectionPanel from "./components/DetectionPanel.jsx";
 import Controls from "./components/Controls.jsx";
 import FacePanel from "./components/FacePanel.jsx";
 import EmotionPanel from "./components/EmotionPanel.jsx";
+import TimelinePanel from "./components/TimelinePanel.jsx";
 import { getHealth } from "./api.js";
 
 export default function App() {
@@ -65,6 +66,10 @@ export default function App() {
         <section className="card">
           <h2>Emotion Detection</h2>
           <EmotionPanel />
+        </section>
+        <section className="card">
+          <h2>Behavior Timeline</h2>
+          <TimelinePanel />
         </section>
         <section className="card">
           <h2>Face Registration & Recognition</h2>

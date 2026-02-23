@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from datetime import datetime
@@ -24,6 +25,32 @@ class FaceDB:
                     name TEXT NOT NULL,
                     embedding BLOB NOT NULL,
                     dim INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS unknown_faces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    embedding BLOB NOT NULL,
+                    dim INTEGER NOT NULL,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    sightings INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    face_type TEXT NOT NULL,
+                    face_id INTEGER,
+                    name TEXT,
+                    score REAL,
+                    bbox TEXT,
                     created_at TEXT NOT NULL
                 )
                 """
@@ -55,3 +82,83 @@ class FaceDB:
             if emb.size != row["dim"]:
                 continue
             yield int(row["id"]), str(row["name"]), emb
+
+    def iter_unknown_embeddings(self) -> Iterable[tuple[int, np.ndarray]]:
+        with self._lock:
+            cur = self._conn.execute("SELECT id, embedding, dim FROM unknown_faces")
+            rows = cur.fetchall()
+        for row in rows:
+            emb = np.frombuffer(row["embedding"], dtype=np.float32)
+            if emb.size != row["dim"]:
+                continue
+            yield int(row["id"]), emb
+
+    def update_unknown(self, unknown_id: int, embedding: np.ndarray) -> None:
+        emb = np.asarray(embedding, dtype=np.float32)
+        payload = emb.tobytes()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE unknown_faces SET embedding = ?, dim = ?, last_seen = ?, sightings = sightings + 1 WHERE id = ?",
+                (payload, emb.size, datetime.utcnow().isoformat(), unknown_id),
+            )
+
+    def add_unknown(self, embedding: np.ndarray) -> int:
+        emb = np.asarray(embedding, dtype=np.float32)
+        payload = emb.tobytes()
+        now = datetime.utcnow().isoformat()
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO unknown_faces (embedding, dim, first_seen, last_seen, sightings) VALUES (?, ?, ?, ?, 1)",
+                (payload, emb.size, now, now),
+            )
+            return int(cur.lastrowid)
+
+    def add_event(
+        self,
+        event_type: str,
+        face_type: str,
+        face_id: int | None,
+        name: str | None,
+        score: float | None,
+        bbox: list[float] | None,
+    ) -> None:
+        payload = json.dumps(bbox) if bbox else None
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO events (event_type, face_type, face_id, name, score, bbox, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_type,
+                    face_type,
+                    face_id,
+                    name,
+                    score,
+                    payload,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+
+    def list_events(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                SELECT id, event_type, face_type, face_id, name, score, bbox, created_at
+                FROM events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            if item.get("bbox"):
+                try:
+                    item["bbox"] = json.loads(item["bbox"])
+                except json.JSONDecodeError:
+                    item["bbox"] = None
+            results.append(item)
+        return results

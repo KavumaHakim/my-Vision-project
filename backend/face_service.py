@@ -14,6 +14,18 @@ class FaceService:
         self._app = FaceAnalysis(name=model_name, providers=providers)
         self._app.prepare(ctx_id=0 if use_gpu else -1, det_size=(640, 640))
 
+    def get_faces(self, image_bgr: np.ndarray) -> list[dict[str, Any]]:
+        faces = self._app.get(image_bgr)
+        results: list[dict[str, Any]] = []
+        for face in faces:
+            results.append(
+                {
+                    "bbox": [float(v) for v in face.bbox],
+                    "embedding": face.embedding,
+                }
+            )
+        return results
+
     def get_embedding(self, image_bgr: np.ndarray) -> tuple[np.ndarray | None, dict[str, Any]]:
         faces = self._app.get(image_bgr)
         if not faces:

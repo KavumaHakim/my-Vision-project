@@ -14,7 +14,7 @@ from config import load_settings
 from detector import Detector
 from face_db import FaceDB
 from face_service import FaceService
-from scheduler import CaptureService, FaceRecognitionService
+from scheduler import CaptureService, FaceRecognitionService, EmotionService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -36,9 +36,11 @@ async def lifespan(app: FastAPI):
     detector.start(camera.read)
     capture_service.start()
     face_recognition_service.start()
+    emotion_service.start()
     try:
         yield
     finally:
+        emotion_service.stop()
         face_recognition_service.stop()
         capture_service.stop()
         detector.stop()
@@ -76,6 +78,14 @@ face_recognition_service = FaceRecognitionService(
     face_service=face_service,
     face_db=face_db,
     threshold=settings.face_match_threshold,
+    unknown_threshold=settings.face_unknown_threshold,
+    interval_s=settings.face_recognition_interval,
+)
+
+emotion_service = EmotionService(
+    detector=detector,
+    hf_url=settings.hf_emotion_url,
+    hf_token=settings.hf_token,
     interval_s=settings.face_recognition_interval,
 )
 
@@ -97,7 +107,7 @@ async def video_stream():
     if not camera.is_opened():
         raise HTTPException(status_code=503, detail="camera_unavailable")
     return StreamingResponse(
-        mjpeg_generator(detector, fps=settings.stream_fps),
+        mjpeg_generator(detector, fps=settings.stream_fps, face_recognition_service=face_recognition_service),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -129,6 +139,21 @@ def _best_matches(embedding: np.ndarray, threshold: float, top_k: int = 3) -> li
             matches.append({"id": face_id, "name": name, "score": score})
     matches.sort(key=lambda item: item["score"], reverse=True)
     return matches[:top_k]
+
+def _best_unknown(embedding: np.ndarray, threshold: float) -> tuple[int | None, float]:
+    emb = np.asarray(embedding, dtype=np.float32)
+    emb_norm = np.linalg.norm(emb) + 1e-10
+    best_id = None
+    best_score = 0.0
+    for unknown_id, stored in face_db.iter_unknown_embeddings():
+        stored_norm = np.linalg.norm(stored) + 1e-10
+        score = float(np.dot(emb, stored) / (emb_norm * stored_norm))
+        if score > best_score:
+            best_score = score
+            best_id = unknown_id
+    if best_id is None or best_score < threshold:
+        return None, best_score
+    return best_id, best_score
 
 
 async def _load_image(source: str, file: UploadFile | None) -> np.ndarray:
@@ -182,17 +207,44 @@ async def face_recognize(
     if source not in {"upload", "live"}:
         raise HTTPException(status_code=400, detail="invalid_source")
     img = await _load_image(source, file)
-    embedding, meta = face_service.get_embedding(img)
-    if embedding is None:
-        raise HTTPException(status_code=422, detail=meta.get("error", "no_face"))
-    matches = _best_matches(embedding, settings.face_match_threshold)
+    faces = face_service.get_faces(img)
+    if not faces:
+        raise HTTPException(status_code=422, detail="no_face")
+    results = []
+    best_overall = None
+    best_score = 0.0
+    for face in faces:
+        embedding = face["embedding"]
+        bbox = face["bbox"]
+        matches = _best_matches(embedding, settings.face_match_threshold)
+        if matches:
+            best = matches[0]
+            if best["score"] > best_score:
+                best_overall = best
+                best_score = best["score"]
+            results.append({"bbox": bbox, "best": best, "matches": matches})
+            continue
+
+        unknown_id, unknown_score = _best_unknown(embedding, settings.face_unknown_threshold)
+        if unknown_id is None:
+            unknown_id = face_db.add_unknown(embedding)
+        else:
+            face_db.update_unknown(unknown_id, embedding)
+        unknown_name = f"Unknown #{unknown_id}"
+        results.append(
+            {
+                "bbox": bbox,
+                "best": {"id": unknown_id, "name": unknown_name, "score": unknown_score},
+                "matches": [],
+            }
+        )
+    matches = best_overall
     return JSONResponse(
         {
             "ok": True,
             "threshold": settings.face_match_threshold,
-            "best": matches[0] if matches else None,
-            "matches": matches,
-            "meta": meta,
+            "best": matches,
+            "faces": results,
         }
     )
 
@@ -200,6 +252,12 @@ async def face_recognize(
 @app.get("/face/last")
 async def face_last():
     return JSONResponse({"ok": True, "result": face_recognition_service.get_last()})
+
+
+@app.get("/timeline")
+async def timeline(limit: int = 100):
+    limit = max(1, min(int(limit), 500))
+    return JSONResponse({"ok": True, "events": face_db.list_events(limit=limit)})
 
 
 @app.post("/emotion")
@@ -244,5 +302,11 @@ async def emotion_detect(
         raise HTTPException(status_code=502, detail="hf_invalid_response")
 
     if resp.status_code >= 400:
+        logger.warning("HF emotion error %s: %s", resp.status_code, payload)
         return JSONResponse({"ok": False, "error": payload}, status_code=resp.status_code)
     return JSONResponse({"ok": True, "result": payload})
+
+
+@app.get("/emotion/last")
+async def emotion_last():
+    return JSONResponse({"ok": True, "result": emotion_service.get_last()})
