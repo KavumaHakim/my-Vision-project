@@ -56,6 +56,13 @@ export async function getTimeline(limit = 100) {
   return data;
 }
 
+export async function getActionLast() {
+  const res = await fetch(`${BASE}/action/last`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "action_last_failed");
+  return data;
+}
+
 export async function faceRegisterLive(name) {
   const form = new FormData();
   form.append("name", name);

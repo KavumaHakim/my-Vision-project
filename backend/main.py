@@ -14,7 +14,8 @@ from config import load_settings
 from detector import Detector
 from face_db import FaceDB
 from face_service import FaceService
-from scheduler import CaptureService, FaceRecognitionService, EmotionService
+from action_service import ActionService
+from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -37,9 +38,11 @@ async def lifespan(app: FastAPI):
     capture_service.start()
     face_recognition_service.start()
     emotion_service.start()
+    action_tracking_service.start()
     try:
         yield
     finally:
+        action_tracking_service.stop()
         emotion_service.stop()
         face_recognition_service.stop()
         capture_service.stop()
@@ -87,6 +90,21 @@ emotion_service = EmotionService(
     hf_url=settings.hf_emotion_url,
     hf_token=settings.hf_token,
     interval_s=settings.face_recognition_interval,
+)
+
+action_service = ActionService(
+    detector=detector,
+    interval_s=settings.action_interval,
+    window_s=settings.action_window_s,
+    frames=settings.action_frames,
+    use_gpu=settings.use_gpu,
+)
+
+action_tracking_service = ActionTrackingService(
+    detector=detector,
+    action_service=action_service,
+    face_db=face_db,
+    interval_s=settings.action_interval,
 )
 
 
@@ -310,3 +328,8 @@ async def emotion_detect(
 @app.get("/emotion/last")
 async def emotion_last():
     return JSONResponse({"ok": True, "result": emotion_service.get_last()})
+
+
+@app.get("/action/last")
+async def action_last():
+    return JSONResponse({"ok": True, "result": action_tracking_service.get_last()})

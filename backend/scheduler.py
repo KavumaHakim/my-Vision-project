@@ -313,3 +313,61 @@ class EmotionService:
             self._set_last(
                 {"ok": True, "result": payload, "timestamp": now_utc().isoformat()}
             )
+
+
+class ActionTrackingService:
+    def __init__(self, detector, action_service, face_db, interval_s: int) -> None:
+        self.detector = detector
+        self.action_service = action_service
+        self.face_db = face_db
+        self.interval_s = max(5, int(interval_s))
+
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._last_result: dict[str, Any] | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def get_last(self) -> dict[str, Any] | None:
+        with self._lock:
+            return dict(self._last_result) if self._last_result else None
+
+    def _set_last(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._last_result = payload
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            time.sleep(self.interval_s)
+            if not self.detector.has_label("person"):
+                continue
+            result = self.action_service.run_once()
+            if not result:
+                continue
+            best = result.get("best")
+            if best:
+                self.face_db.add_event(
+                    event_type="action_detected",
+                    face_type="behavior",
+                    face_id=None,
+                    name=best.get("label"),
+                    score=best.get("score"),
+                    bbox=None,
+                )
+            payload = {
+                "ok": True,
+                "best": best,
+                "topk": result.get("topk", []),
+                "timestamp": now_utc().isoformat(),
+            }
+            self._set_last(payload)

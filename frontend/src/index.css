@@ -183,6 +183,22 @@ body {
   gap: 10px;
 }
 
+.action-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.action-best {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.action-best span {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 14px;
+}
+
 .timeline-panel {
   display: grid;
   gap: 12px;

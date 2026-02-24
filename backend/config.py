@@ -22,9 +22,12 @@ class Settings:
     face_model_name: str
     face_match_threshold: float
     face_recognition_interval: int
+    face_unknown_threshold: float
     hf_token: str | None
     hf_emotion_url: str
-    face_unknown_threshold: float
+    action_interval: int
+    action_window_s: float
+    action_frames: int
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -55,6 +58,9 @@ def load_settings() -> Settings:
         "HF_EMOTION_URL",
         "https://router.huggingface.co/hf-inference/models/dima806/facial_emotions_image_detection",
     ).strip()
+    action_interval = int(os.getenv("ACTION_INTERVAL", "10").strip())
+    action_window_s = float(os.getenv("ACTION_WINDOW_S", "2.0").strip())
+    action_frames = int(os.getenv("ACTION_FRAMES", "16").strip())
 
     return Settings(
         model_path=model_path,
@@ -74,4 +80,7 @@ def load_settings() -> Settings:
         face_unknown_threshold=face_unknown_threshold,
         hf_token=hf_token,
         hf_emotion_url=hf_emotion_url,
+        action_interval=action_interval,
+        action_window_s=action_window_s,
+        action_frames=action_frames,
     )
