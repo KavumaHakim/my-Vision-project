@@ -55,6 +55,17 @@ class FaceDB:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS face_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    face_id INTEGER NOT NULL,
+                    embedding BLOB NOT NULL,
+                    dim INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def add(self, name: str, embedding: np.ndarray) -> int:
         emb = np.asarray(embedding, dtype=np.float32)
@@ -77,11 +88,30 @@ class FaceDB:
         with self._lock:
             cur = self._conn.execute("SELECT id, name, embedding, dim FROM faces")
             rows = cur.fetchall()
+            cur_samples = self._conn.execute(
+                "SELECT face_id, embedding, dim FROM face_samples"
+            )
+            sample_rows = cur_samples.fetchall()
         for row in rows:
             emb = np.frombuffer(row["embedding"], dtype=np.float32)
             if emb.size != row["dim"]:
                 continue
             yield int(row["id"]), str(row["name"]), emb
+        for row in sample_rows:
+            emb = np.frombuffer(row["embedding"], dtype=np.float32)
+            if emb.size != row["dim"]:
+                continue
+            yield int(row["face_id"]), "sample", emb
+
+    def add_face_sample(self, face_id: int, embedding: np.ndarray) -> int:
+        emb = np.asarray(embedding, dtype=np.float32)
+        payload = emb.tobytes()
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO face_samples (face_id, embedding, dim, created_at) VALUES (?, ?, ?, ?)",
+                (face_id, payload, emb.size, datetime.utcnow().isoformat()),
+            )
+            return int(cur.lastrowid)
 
     def iter_unknown_embeddings(self) -> Iterable[tuple[int, np.ndarray]]:
         with self._lock:

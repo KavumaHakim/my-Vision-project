@@ -109,6 +109,7 @@ class FaceRecognitionService:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_result: dict[str, Any] | None = None
+        self._recognized_counts: dict[int, int] = {}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -188,6 +189,11 @@ class FaceRecognitionService:
                     if best["score"] > best_score:
                         best_overall = best
                         best_score = best["score"]
+                    face_id = int(best["id"])
+                    self._recognized_counts[face_id] = self._recognized_counts.get(face_id, 0) + 1
+                    if self._recognized_counts[face_id] == 3:
+                        self.face_db.add_face_sample(face_id, embedding)
+                        self._recognized_counts[face_id] = 0
                     self.face_db.add_event(
                         event_type="face_recognized",
                         face_type="known",
