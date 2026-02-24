@@ -63,6 +63,13 @@ export async function getActionLast() {
   return data;
 }
 
+export async function getAudioLast() {
+  const res = await fetch(`${BASE}/audio/last`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "audio_last_failed");
+  return data;
+}
+
 export async function faceRegisterLive(name) {
   const form = new FormData();
   form.append("name", name);

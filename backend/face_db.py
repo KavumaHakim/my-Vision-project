@@ -92,6 +92,7 @@ class FaceDB:
                 "SELECT face_id, embedding, dim FROM face_samples"
             )
             sample_rows = cur_samples.fetchall()
+        id_to_name = {int(row["id"]): str(row["name"]) for row in rows}
         for row in rows:
             emb = np.frombuffer(row["embedding"], dtype=np.float32)
             if emb.size != row["dim"]:
@@ -101,7 +102,9 @@ class FaceDB:
             emb = np.frombuffer(row["embedding"], dtype=np.float32)
             if emb.size != row["dim"]:
                 continue
-            yield int(row["face_id"]), "sample", emb
+            face_id = int(row["face_id"])
+            name = id_to_name.get(face_id, "unknown")
+            yield face_id, name, emb
 
     def add_face_sample(self, face_id: int, embedding: np.ndarray) -> int:
         emb = np.asarray(embedding, dtype=np.float32)

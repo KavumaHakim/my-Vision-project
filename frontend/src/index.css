@@ -199,6 +199,22 @@ body {
   font-size: 14px;
 }
 
+.audio-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.audio-alert {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.audio-alert span {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 14px;
+}
+
 .timeline-panel {
   display: grid;
   gap: 12px;

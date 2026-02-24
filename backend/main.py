@@ -15,6 +15,7 @@ from detector import Detector
 from face_db import FaceDB
 from face_service import FaceService
 from action_service import ActionService
+from audio_alert_service import AudioAlertService
 from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
@@ -39,9 +40,11 @@ async def lifespan(app: FastAPI):
     face_recognition_service.start()
     emotion_service.start()
     action_tracking_service.start()
+    audio_alert_service.start()
     try:
         yield
     finally:
+        audio_alert_service.stop()
         action_tracking_service.stop()
         emotion_service.stop()
         face_recognition_service.stop()
@@ -105,6 +108,19 @@ action_tracking_service = ActionTrackingService(
     action_service=action_service,
     face_db=face_db,
     interval_s=settings.action_interval,
+)
+
+audio_alert_service = AudioAlertService(
+    face_db=face_db,
+    hf_url=settings.hf_audio_url,
+    hf_token=settings.hf_token,
+    labels=settings.audio_labels,
+    threshold=settings.audio_threshold,
+    interval_s=settings.audio_interval,
+    window_s=settings.audio_window_s,
+    sample_rate=settings.audio_sample_rate,
+    device=settings.audio_device,
+    local_model=settings.audio_local_model,
 )
 
 
@@ -333,3 +349,8 @@ async def emotion_last():
 @app.get("/action/last")
 async def action_last():
     return JSONResponse({"ok": True, "result": action_tracking_service.get_last()})
+
+
+@app.get("/audio/last")
+async def audio_last():
+    return JSONResponse({"ok": True, "result": audio_alert_service.get_last()})

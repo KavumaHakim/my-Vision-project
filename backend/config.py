@@ -28,6 +28,14 @@ class Settings:
     action_interval: int
     action_window_s: float
     action_frames: int
+    audio_interval: int
+    audio_window_s: float
+    audio_sample_rate: int
+    audio_threshold: float
+    audio_labels: list[str]
+    audio_device: str | None
+    hf_audio_url: str | None
+    audio_local_model: str | None
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -61,6 +69,21 @@ def load_settings() -> Settings:
     action_interval = int(os.getenv("ACTION_INTERVAL", "10").strip())
     action_window_s = float(os.getenv("ACTION_WINDOW_S", "2.0").strip())
     action_frames = int(os.getenv("ACTION_FRAMES", "16").strip())
+    audio_interval = int(os.getenv("AUDIO_INTERVAL", "5").strip())
+    audio_window_s = float(os.getenv("AUDIO_WINDOW_S", "2.0").strip())
+    audio_sample_rate = int(os.getenv("AUDIO_SAMPLE_RATE", "16000").strip())
+    audio_threshold = float(os.getenv("AUDIO_THRESHOLD", "0.35").strip())
+    audio_labels = [
+        label.strip()
+        for label in os.getenv("AUDIO_LABELS", "scream,shout,yell,screaming").split(",")
+        if label.strip()
+    ]
+    audio_device = os.getenv("AUDIO_DEVICE", "").strip() or None
+    hf_audio_url = os.getenv(
+        "HF_AUDIO_URL",
+        "https://api-inference.huggingface.co/models/MIT/ast-finetuned-audioset-10-10-0.4593",
+    ).strip()
+    audio_local_model = os.getenv("AUDIO_LOCAL_MODEL", "").strip() or None
 
     return Settings(
         model_path=model_path,
@@ -83,4 +106,12 @@ def load_settings() -> Settings:
         action_interval=action_interval,
         action_window_s=action_window_s,
         action_frames=action_frames,
+        audio_interval=audio_interval,
+        audio_window_s=audio_window_s,
+        audio_sample_rate=audio_sample_rate,
+        audio_threshold=audio_threshold,
+        audio_labels=audio_labels,
+        audio_device=audio_device,
+        hf_audio_url=hf_audio_url,
+        audio_local_model=audio_local_model,
     )

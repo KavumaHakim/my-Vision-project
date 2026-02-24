@@ -6,6 +6,7 @@ import FacePanel from "./components/FacePanel.jsx";
 import EmotionPanel from "./components/EmotionPanel.jsx";
 import TimelinePanel from "./components/TimelinePanel.jsx";
 import ActionPanel from "./components/ActionPanel.jsx";
+import AudioPanel from "./components/AudioPanel.jsx";
 import { getHealth } from "./api.js";
 
 export default function App() {
@@ -67,6 +68,10 @@ export default function App() {
         <section className="card">
           <h2>Emotion Detection</h2>
           <EmotionPanel />
+        </section>
+        <section className="card">
+          <h2>Audio Alerts</h2>
+          <AudioPanel />
         </section>
         <section className="card">
           <h2>Action Tracking</h2>
