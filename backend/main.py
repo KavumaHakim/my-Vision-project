@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import cv2
@@ -86,6 +86,7 @@ face_recognition_service = FaceRecognitionService(
     threshold=settings.face_match_threshold,
     unknown_threshold=settings.face_unknown_threshold,
     interval_s=settings.face_recognition_interval,
+    security_unknown_seconds=settings.security_unknown_seconds,
 )
 
 emotion_service = EmotionService(
@@ -93,6 +94,7 @@ emotion_service = EmotionService(
     hf_url=settings.hf_emotion_url,
     hf_token=settings.hf_token,
     interval_s=settings.face_recognition_interval,
+    threshold=settings.emotion_conf_threshold,
 )
 
 action_service = ActionService(
@@ -108,6 +110,7 @@ action_tracking_service = ActionTrackingService(
     action_service=action_service,
     face_db=face_db,
     interval_s=settings.action_interval,
+    threshold=settings.action_conf_threshold,
 )
 
 audio_alert_service = AudioAlertService(
@@ -288,10 +291,54 @@ async def face_last():
     return JSONResponse({"ok": True, "result": face_recognition_service.get_last()})
 
 
+@app.get("/security/last")
+async def security_last():
+    return JSONResponse({"ok": True, "result": face_recognition_service.get_security_status()})
+
+
+@app.get("/security/unknown-frame")
+async def security_unknown_frame(unknown_id: int | None = None):
+    status = face_recognition_service.get_security_status()
+    unknowns = status.get("unknowns") or []
+    if not unknowns:
+        raise HTTPException(status_code=404, detail="no_unknowns")
+    if unknown_id is None:
+        target = unknowns[0]
+    else:
+        target = next((item for item in unknowns if item.get("id") == unknown_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="unknown_not_found")
+    bbox = target.get("bbox")
+    if not bbox or len(bbox) != 4:
+        raise HTTPException(status_code=404, detail="bbox_missing")
+
+    frame = detector.get_latest_frame(annotated=False)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="no_frame")
+    x1, y1, x2, y2 = [int(v) for v in bbox]
+    x1 = max(0, min(x1, frame.shape[1] - 1))
+    x2 = max(0, min(x2, frame.shape[1]))
+    y1 = max(0, min(y1, frame.shape[0] - 1))
+    y2 = max(0, min(y2, frame.shape[0]))
+    if x2 <= x1 or y2 <= y1:
+        raise HTTPException(status_code=400, detail="invalid_bbox")
+    crop = frame[y1:y2, x1:x2]
+    ok, encoded = cv2.imencode(".jpg", crop)
+    if not ok:
+        raise HTTPException(status_code=500, detail="encode_failed")
+    return Response(content=encoded.tobytes(), media_type="image/jpeg")
+
+
 @app.get("/timeline")
 async def timeline(limit: int = 100):
     limit = max(1, min(int(limit), 500))
     return JSONResponse({"ok": True, "events": face_db.list_events(limit=limit)})
+
+
+@app.get("/attendance")
+async def attendance(limit: int = 50):
+    limit = max(1, min(int(limit), 200))
+    return JSONResponse({"ok": True, "records": face_db.list_attendance(limit=limit)})
 
 
 @app.post("/emotion")

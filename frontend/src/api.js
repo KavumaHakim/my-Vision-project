@@ -70,6 +70,25 @@ export async function getAudioLast() {
   return data;
 }
 
+export async function getSecurityLast() {
+  const res = await fetch(`${BASE}/security/last`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "security_last_failed");
+  return data;
+}
+
+export function securityUnknownFrameUrl(id) {
+  const suffix = id ? `?unknown_id=${id}` : "";
+  return `${BASE}/security/unknown-frame${suffix}`;
+}
+
+export async function getAttendance(limit = 50) {
+  const res = await fetch(`${BASE}/attendance?limit=${limit}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "attendance_failed");
+  return data;
+}
+
 export async function faceRegisterLive(name) {
   const form = new FormData();
   form.append("name", name);

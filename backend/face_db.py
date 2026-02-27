@@ -195,3 +195,21 @@ class FaceDB:
                     item["bbox"] = None
             results.append(item)
         return results
+
+    def list_attendance(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                SELECT name,
+                       COUNT(*) as total,
+                       MAX(created_at) as last_seen
+                FROM events
+                WHERE event_type = 'face_recognized' AND face_type = 'known' AND name IS NOT NULL
+                GROUP BY name
+                ORDER BY last_seen DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]

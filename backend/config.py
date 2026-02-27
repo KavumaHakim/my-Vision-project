@@ -28,6 +28,7 @@ class Settings:
     action_interval: int
     action_window_s: float
     action_frames: int
+    action_conf_threshold: float
     audio_interval: int
     audio_window_s: float
     audio_sample_rate: int
@@ -36,6 +37,8 @@ class Settings:
     audio_device: str | None
     hf_audio_url: str | None
     audio_local_model: str | None
+    emotion_conf_threshold: float
+    security_unknown_seconds: int
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -69,6 +72,7 @@ def load_settings() -> Settings:
     action_interval = int(os.getenv("ACTION_INTERVAL", "10").strip())
     action_window_s = float(os.getenv("ACTION_WINDOW_S", "2.0").strip())
     action_frames = int(os.getenv("ACTION_FRAMES", "16").strip())
+    action_conf_threshold = float(os.getenv("ACTION_CONF_THRESHOLD", "0.95").strip())
     audio_interval = int(os.getenv("AUDIO_INTERVAL", "5").strip())
     audio_window_s = float(os.getenv("AUDIO_WINDOW_S", "2.0").strip())
     audio_sample_rate = int(os.getenv("AUDIO_SAMPLE_RATE", "16000").strip())
@@ -84,6 +88,8 @@ def load_settings() -> Settings:
         "https://api-inference.huggingface.co/models/MIT/ast-finetuned-audioset-10-10-0.4593",
     ).strip()
     audio_local_model = os.getenv("AUDIO_LOCAL_MODEL", "").strip() or None
+    emotion_conf_threshold = float(os.getenv("EMOTION_CONF_THRESHOLD", "0.4").strip())
+    security_unknown_seconds = int(os.getenv("SECURITY_UNKNOWN_SECONDS", "5").strip())
 
     return Settings(
         model_path=model_path,
@@ -106,6 +112,7 @@ def load_settings() -> Settings:
         action_interval=action_interval,
         action_window_s=action_window_s,
         action_frames=action_frames,
+        action_conf_threshold=action_conf_threshold,
         audio_interval=audio_interval,
         audio_window_s=audio_window_s,
         audio_sample_rate=audio_sample_rate,
@@ -114,4 +121,6 @@ def load_settings() -> Settings:
         audio_device=audio_device,
         hf_audio_url=hf_audio_url,
         audio_local_model=audio_local_model,
+        emotion_conf_threshold=emotion_conf_threshold,
+        security_unknown_seconds=security_unknown_seconds,
     )

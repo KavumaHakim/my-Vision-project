@@ -97,6 +97,7 @@ class FaceRecognitionService:
         threshold: float,
         unknown_threshold: float,
         interval_s: int,
+        security_unknown_seconds: int,
     ) -> None:
         self.detector = detector
         self.face_service = face_service
@@ -104,12 +105,16 @@ class FaceRecognitionService:
         self.threshold = float(threshold)
         self.unknown_threshold = float(unknown_threshold)
         self.interval_s = max(5, int(interval_s))
+        self.security_unknown_seconds = max(1, int(security_unknown_seconds))
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_result: dict[str, Any] | None = None
         self._recognized_counts: dict[int, int] = {}
+        self._unknown_seen: dict[int, float] = {}
+        self._unknown_alerted: set[int] = set()
+        self._security_status: dict[str, Any] = {"unknowns": [], "threshold_s": self.security_unknown_seconds}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -129,6 +134,10 @@ class FaceRecognitionService:
     def _set_last(self, payload: dict[str, Any]) -> None:
         with self._lock:
             self._last_result = payload
+
+    def get_security_status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._security_status)
 
     def _best_matches(self, embedding) -> list[dict[str, Any]]:
         emb = np.asarray(embedding, dtype=np.float32)
@@ -180,6 +189,7 @@ class FaceRecognitionService:
             results: list[dict[str, Any]] = []
             best_overall = None
             best_score = 0.0
+            current_unknown_map: dict[int, list[float]] = {}
             for face in faces:
                 embedding = face["embedding"]
                 bbox = face["bbox"]
@@ -211,6 +221,7 @@ class FaceRecognitionService:
                 else:
                     self.face_db.update_unknown(unknown_id, embedding)
                 unknown_name = f"Unknown #{unknown_id}"
+                current_unknown_map[int(unknown_id)] = bbox
                 self.face_db.add_event(
                     event_type="face_recognized",
                     face_type="unknown",
@@ -227,6 +238,38 @@ class FaceRecognitionService:
                     }
                 )
 
+            now_ts = time.time()
+            security_unknowns: list[dict[str, Any]] = []
+            for unknown_id, bbox in current_unknown_map.items():
+                if unknown_id not in self._unknown_seen:
+                    self._unknown_seen[unknown_id] = now_ts
+                duration = now_ts - self._unknown_seen[unknown_id]
+                alerted = unknown_id in self._unknown_alerted
+                if duration >= self.security_unknown_seconds and not alerted:
+                    self._unknown_alerted.add(unknown_id)
+                    self.face_db.add_event(
+                        event_type="security_alert",
+                        face_type="unknown",
+                        face_id=unknown_id,
+                        name=f"Unknown #{unknown_id}",
+                        score=None,
+                        bbox=None,
+                    )
+                    alerted = True
+                security_unknowns.append(
+                    {
+                        "id": unknown_id,
+                        "duration_s": round(duration, 1),
+                        "alerted": alerted,
+                        "bbox": bbox,
+                    }
+                )
+
+            stale = set(self._unknown_seen) - set(current_unknown_map)
+            for unknown_id in stale:
+                self._unknown_seen.pop(unknown_id, None)
+                self._unknown_alerted.discard(unknown_id)
+
             self._set_last(
                 {
                     "ok": True,
@@ -236,14 +279,28 @@ class FaceRecognitionService:
                     "timestamp": now_utc().isoformat(),
                 }
             )
+            with self._lock:
+                self._security_status = {
+                    "unknowns": security_unknowns,
+                    "threshold_s": self.security_unknown_seconds,
+                    "timestamp": now_utc().isoformat(),
+                }
 
 
 class EmotionService:
-    def __init__(self, detector, hf_url: str, hf_token: str | None, interval_s: int) -> None:
+    def __init__(
+        self,
+        detector,
+        hf_url: str,
+        hf_token: str | None,
+        interval_s: int,
+        threshold: float,
+    ) -> None:
         self.detector = detector
         self.hf_url = hf_url
         self.hf_token = hf_token
         self.interval_s = max(5, int(interval_s))
+        self.threshold = float(threshold)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -310,17 +367,25 @@ class EmotionService:
                 )
                 continue
 
+            filtered = []
+            if isinstance(payload, list):
+                filtered = [
+                    item
+                    for item in payload
+                    if float(item.get("score", 0.0)) >= self.threshold
+                ]
             self._set_last(
-                {"ok": True, "result": payload, "timestamp": now_utc().isoformat()}
+                {"ok": True, "result": filtered, "timestamp": now_utc().isoformat()}
             )
 
 
 class ActionTrackingService:
-    def __init__(self, detector, action_service, face_db, interval_s: int) -> None:
+    def __init__(self, detector, action_service, face_db, interval_s: int, threshold: float) -> None:
         self.detector = detector
         self.action_service = action_service
         self.face_db = face_db
         self.interval_s = max(5, int(interval_s))
+        self.threshold = float(threshold)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -355,7 +420,7 @@ class ActionTrackingService:
             if not result:
                 continue
             best = result.get("best")
-            if best:
+            if best and float(best.get("score", 0.0)) >= self.threshold:
                 self.face_db.add_event(
                     event_type="action_detected",
                     face_type="behavior",
@@ -364,10 +429,6 @@ class ActionTrackingService:
                     score=best.get("score"),
                     bbox=None,
                 )
-            payload = {
-                "ok": True,
-                "best": best,
-                "topk": result.get("topk", []),
-                "timestamp": now_utc().isoformat(),
-            }
+            topk = [item for item in result.get("topk", []) if float(item.get("score", 0.0)) >= self.threshold]
+            payload = {"ok": True, "best": best if topk else None, "topk": topk, "timestamp": now_utc().isoformat()}
             self._set_last(payload)
