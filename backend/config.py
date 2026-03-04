@@ -39,6 +39,13 @@ class Settings:
     audio_local_model: str | None
     emotion_conf_threshold: float
     security_unknown_seconds: int
+    motion_pixel_threshold: int
+    motion_min_pixels: int
+    face_after_motion_seconds: float
+    post_face_window_s: float
+    pose_model_path: str | None
+    pose_interval: int
+    pose_conf_threshold: float
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -90,6 +97,13 @@ def load_settings() -> Settings:
     audio_local_model = os.getenv("AUDIO_LOCAL_MODEL", "").strip() or None
     emotion_conf_threshold = float(os.getenv("EMOTION_CONF_THRESHOLD", "0.4").strip())
     security_unknown_seconds = int(os.getenv("SECURITY_UNKNOWN_SECONDS", "5").strip())
+    motion_pixel_threshold = int(os.getenv("MOTION_PIXEL_THRESHOLD", "25").strip())
+    motion_min_pixels = int(os.getenv("MOTION_MIN_PIXELS", "5000").strip())
+    face_after_motion_seconds = float(os.getenv("FACE_AFTER_MOTION_SECONDS", "10.0").strip())
+    post_face_window_s = float(os.getenv("POST_FACE_WINDOW_S", "8.0").strip())
+    pose_model_path = os.getenv("POSE_MODEL_PATH", "").strip() or None
+    pose_interval = int(os.getenv("POSE_INTERVAL", "10").strip())
+    pose_conf_threshold = float(os.getenv("POSE_CONF_THRESHOLD", "0.25").strip())
 
     return Settings(
         model_path=model_path,
@@ -123,4 +137,11 @@ def load_settings() -> Settings:
         audio_local_model=audio_local_model,
         emotion_conf_threshold=emotion_conf_threshold,
         security_unknown_seconds=security_unknown_seconds,
+        motion_pixel_threshold=motion_pixel_threshold,
+        motion_min_pixels=motion_min_pixels,
+        face_after_motion_seconds=face_after_motion_seconds,
+        post_face_window_s=post_face_window_s,
+        pose_model_path=pose_model_path,
+        pose_interval=pose_interval,
+        pose_conf_threshold=pose_conf_threshold,
     )

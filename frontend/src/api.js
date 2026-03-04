@@ -70,6 +70,13 @@ export async function getAudioLast() {
   return data;
 }
 
+export async function getPoseLast() {
+  const res = await fetch(`${BASE}/pose/last`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "pose_last_failed");
+  return data;
+}
+
 export async function getSecurityLast() {
   const res = await fetch(`${BASE}/security/last`);
   const data = await res.json();

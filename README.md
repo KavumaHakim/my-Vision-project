@@ -72,9 +72,14 @@ Options:
 - `GET /detections` latest detections
 - `POST /capture` capture + upload
 - `GET /health` status
+- `GET /face/last-crop` latest cropped face from the recognition pipeline
+- `GET /pose/last` latest pose tracking result (when pose model is configured)
 
 ## Notes
 
 - The system captures an image automatically every `IMAGE_CAPTURE_INTERVAL` seconds.
 - Manual capture obeys `UPLOAD_COOLDOWN_SECONDS`.
 - Captures are stored in Supabase under `captures/YYYY/MM/DD/`.
+- Resource-saving pipeline order: motion -> person stage -> face stage -> full object/action/pose stage.
+- Face recognition runs when a person is detected, for `FACE_AFTER_MOTION_SECONDS` after motion first appears.
+- Pose tracking is optional and enabled only when `POSE_MODEL_PATH` is set.

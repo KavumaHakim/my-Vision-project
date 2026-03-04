@@ -98,6 +98,7 @@ class FaceRecognitionService:
         unknown_threshold: float,
         interval_s: int,
         security_unknown_seconds: int,
+        post_face_window_s: float,
     ) -> None:
         self.detector = detector
         self.face_service = face_service
@@ -106,11 +107,13 @@ class FaceRecognitionService:
         self.unknown_threshold = float(unknown_threshold)
         self.interval_s = max(5, int(interval_s))
         self.security_unknown_seconds = max(1, int(security_unknown_seconds))
+        self.post_face_window_s = max(1.0, float(post_face_window_s))
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_result: dict[str, Any] | None = None
+        self._last_face_crop_jpeg: bytes | None = None
         self._recognized_counts: dict[int, int] = {}
         self._unknown_seen: dict[int, float] = {}
         self._unknown_alerted: set[int] = set()
@@ -134,6 +137,31 @@ class FaceRecognitionService:
     def _set_last(self, payload: dict[str, Any]) -> None:
         with self._lock:
             self._last_result = payload
+
+    def get_last_face_crop(self) -> bytes | None:
+        with self._lock:
+            return self._last_face_crop_jpeg
+
+    def _set_last_face_crop(self, payload: bytes | None) -> None:
+        with self._lock:
+            self._last_face_crop_jpeg = payload
+
+    @staticmethod
+    def _crop_face_jpeg(frame: np.ndarray, bbox: list[float]) -> bytes | None:
+        if not bbox or len(bbox) != 4:
+            return None
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        x1 = max(0, min(x1, frame.shape[1] - 1))
+        y1 = max(0, min(y1, frame.shape[0] - 1))
+        x2 = max(0, min(x2, frame.shape[1]))
+        y2 = max(0, min(y2, frame.shape[0]))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        crop = frame[y1:y2, x1:x2]
+        ok, encoded = cv2.imencode(".jpg", crop)
+        if not ok:
+            return None
+        return encoded.tobytes()
 
     def get_security_status(self) -> dict[str, Any]:
         with self._lock:
@@ -169,7 +197,9 @@ class FaceRecognitionService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
-            if not self.detector.has_label("person"):
+            if not self.detector.can_run_face_pipeline():
+                continue
+            if not self.detector.has_person():
                 continue
             frame = self.detector.get_latest_frame(annotated=False)
             if frame is None:
@@ -189,10 +219,16 @@ class FaceRecognitionService:
             results: list[dict[str, Any]] = []
             best_overall = None
             best_score = 0.0
+            largest_bbox = None
+            largest_area = 0.0
             current_unknown_map: dict[int, list[float]] = {}
             for face in faces:
                 embedding = face["embedding"]
                 bbox = face["bbox"]
+                area = max(0.0, (float(bbox[2]) - float(bbox[0])) * (float(bbox[3]) - float(bbox[1])))
+                if area > largest_area:
+                    largest_area = area
+                    largest_bbox = bbox
                 matches = self._best_matches(embedding)
                 if matches:
                     best = matches[0]
@@ -237,6 +273,9 @@ class FaceRecognitionService:
                         "matches": [],
                     }
                 )
+
+            self._set_last_face_crop(self._crop_face_jpeg(frame, largest_bbox))
+            self.detector.open_post_face_window(self.post_face_window_s)
 
             now_ts = time.time()
             security_unknowns: list[dict[str, Any]] = []
@@ -414,7 +453,9 @@ class ActionTrackingService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
-            if not self.detector.has_label("person"):
+            if not self.detector.can_run_post_face_pipeline():
+                continue
+            if not self.detector.has_motion():
                 continue
             result = self.action_service.run_once()
             if not result:
@@ -431,4 +472,65 @@ class ActionTrackingService:
                 )
             topk = [item for item in result.get("topk", []) if float(item.get("score", 0.0)) >= self.threshold]
             payload = {"ok": True, "best": best if topk else None, "topk": topk, "timestamp": now_utc().isoformat()}
+            self._set_last(payload)
+
+
+class PoseTrackingService:
+    def __init__(self, detector, pose_service, face_db, interval_s: int, threshold: float) -> None:
+        self.detector = detector
+        self.pose_service = pose_service
+        self.face_db = face_db
+        self.interval_s = max(5, int(interval_s))
+        self.threshold = float(threshold)
+
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._last_result: dict[str, Any] | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        if not self.pose_service.enabled:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def get_last(self) -> dict[str, Any] | None:
+        with self._lock:
+            return dict(self._last_result) if self._last_result else None
+
+    def _set_last(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._last_result = payload
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            time.sleep(self.interval_s)
+            if not self.detector.can_run_post_face_pipeline():
+                continue
+            if not self.detector.has_motion():
+                continue
+            frame = self.detector.get_latest_frame(annotated=False)
+            if frame is None:
+                continue
+            result = self.pose_service.run_once(frame, conf_threshold=self.threshold)
+            if not result:
+                continue
+            poses = result.get("poses") or []
+            if poses:
+                self.face_db.add_event(
+                    event_type="pose_detected",
+                    face_type="pose",
+                    face_id=None,
+                    name=f"poses:{len(poses)}",
+                    score=float(poses[0].get("confidence", 0.0)),
+                    bbox=None,
+                )
+            payload = {"ok": True, "poses": poses, "timestamp": now_utc().isoformat()}
             self._set_last(payload)

@@ -13,18 +13,34 @@ from utils import now_utc
 
 
 class Detector:
-    def __init__(self, model_path: str, use_gpu: bool) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        use_gpu: bool,
+        motion_pixel_threshold: int = 25,
+        motion_min_pixels: int = 5000,
+        face_after_motion_seconds: float = 10.0,
+    ) -> None:
         if not model_path:
             raise RuntimeError("MODEL_PATH is required")
         self.model = YOLO(model_path)
         self.device = "cuda" if use_gpu else "cpu"
         self.model.to(self.device)
+        self.motion_pixel_threshold = max(1, int(motion_pixel_threshold))
+        self.motion_min_pixels = max(100, int(motion_min_pixels))
+        self.face_after_motion_seconds = max(1.0, float(face_after_motion_seconds))
 
         self._lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
         self._latest_raw: np.ndarray | None = None
         self._latest_detections: list[dict[str, Any]] = []
         self._latest_ts: str | None = None
+        self._latest_motion = False
+        self._latest_person = False
+        self._face_after_motion_until = 0.0
+        self._motion_latched = False
+        self._post_face_until = 0.0
+        self._prev_motion_gray: np.ndarray | None = None
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -52,12 +68,94 @@ class Detector:
         with self._lock:
             return any(det.get("label") == label for det in self._latest_detections)
 
+    def has_motion(self) -> bool:
+        with self._lock:
+            return self._latest_motion
+
+    def has_person(self) -> bool:
+        with self._lock:
+            return self._latest_person
+
+    def open_post_face_window(self, window_s: float = 8.0) -> None:
+        until = time.time() + max(1.0, float(window_s))
+        with self._lock:
+            self._post_face_until = max(self._post_face_until, until)
+
+    def can_run_post_face_pipeline(self) -> bool:
+        with self._lock:
+            return time.time() < self._post_face_until
+
+    def can_run_face_pipeline(self) -> bool:
+        with self._lock:
+            return self._latest_motion or time.time() < self._face_after_motion_until
+
     def get_latest_frame(self, annotated: bool = True):
         with self._lock:
             frame = self._latest_frame if annotated else self._latest_raw
             if frame is None:
                 return None
             return frame.copy()
+
+    def _is_motion_detected(self, frame: np.ndarray) -> bool:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        if self._prev_motion_gray is None:
+            self._prev_motion_gray = gray
+            return False
+        delta = cv2.absdiff(self._prev_motion_gray, gray)
+        self._prev_motion_gray = gray
+        thresh = cv2.threshold(
+            delta,
+            self.motion_pixel_threshold,
+            255,
+            cv2.THRESH_BINARY,
+        )[1]
+        changed = int(cv2.countNonZero(thresh))
+        return changed >= self.motion_min_pixels
+
+    def _parse_detections(self, result) -> tuple[list[dict[str, Any]], bool]:
+        detections: list[dict[str, Any]] = []
+        person_present = False
+        if result is None:
+            return detections, person_present
+        for box in result.boxes:
+            xyxy = box.xyxy[0].cpu().numpy().tolist()
+            x1, y1, x2, y2 = xyxy
+            w = max(0, x2 - x1)
+            h = max(0, y2 - y1)
+            conf = float(box.conf[0].cpu().item())
+            cls_id = int(box.cls[0].cpu().item())
+            label = self.model.names.get(cls_id, str(cls_id))
+            if label == "person":
+                person_present = True
+            detections.append(
+                {
+                    "label": label,
+                    "confidence": round(conf, 4),
+                    "bbox": [int(x1), int(y1), int(w), int(h)],
+                }
+            )
+        return detections, person_present
+
+    def _draw_detections(self, frame: np.ndarray, detections: list[dict[str, Any]], color=(0, 255, 0)) -> None:
+        for det in detections:
+            x, y, w, h = det["bbox"]
+            x2 = x + w
+            y2 = y + h
+            label = det["label"]
+            conf = float(det["confidence"])
+            cv2.rectangle(frame, (x, y), (x2, y2), color, 2)
+            text = f"{label} {conf:.2f}"
+            cv2.putText(
+                frame,
+                text,
+                (x, max(0, y - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
     def _loop(self, frame_source) -> None:
         while not self._stop.is_set():
@@ -67,46 +165,34 @@ class Detector:
                 continue
 
             raw = frame.copy()
-            results = self.model.predict(
-                source=frame,
-                verbose=False,
-                device=self.device,
-                imgsz=640,
-                conf=0.25,
-            )
+            motion_detected = self._is_motion_detected(raw)
+            now_ts = time.time()
+            if motion_detected and not self._motion_latched:
+                self._face_after_motion_until = now_ts + self.face_after_motion_seconds
+                self._motion_latched = True
+            elif not motion_detected:
+                self._motion_latched = False
+
             detections: list[dict[str, Any]] = []
+            person_present = False
 
-            if results:
-                result = results[0]
-                for box in result.boxes:
-                    xyxy = box.xyxy[0].cpu().numpy().tolist()
-                    x1, y1, x2, y2 = xyxy
-                    w = max(0, x2 - x1)
-                    h = max(0, y2 - y1)
-                    conf = float(box.conf[0].cpu().item())
-                    cls_id = int(box.cls[0].cpu().item())
-                    label = self.model.names.get(cls_id, str(cls_id))
-
-                    detections.append(
-                        {
-                            "label": label,
-                            "confidence": round(conf, 4),
-                            "bbox": [int(x1), int(y1), int(w), int(h)],
-                        }
-                    )
-
-                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                    text = f"{label} {conf:.2f}"
-                    cv2.putText(
-                        frame,
-                        text,
-                        (int(x1), max(0, int(y1) - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
+            if motion_detected or now_ts < self._face_after_motion_until:
+                run_full_detection = self.can_run_post_face_pipeline()
+                results = self.model.predict(
+                    source=frame,
+                    verbose=False,
+                    device=self.device,
+                    imgsz=640,
+                    conf=0.25,
+                    classes=None if run_full_detection else [0],
+                )
+                result = results[0] if results else None
+                detections, person_present = self._parse_detections(result)
+                self._draw_detections(
+                    frame,
+                    detections,
+                    color=(0, 255, 0) if run_full_detection else (0, 180, 255),
+                )
 
             ts = now_utc().isoformat()
             with self._lock:
@@ -114,4 +200,6 @@ class Detector:
                 self._latest_raw = raw
                 self._latest_detections = detections
                 self._latest_ts = ts
+                self._latest_motion = motion_detected
+                self._latest_person = person_present
                 self._ready = True

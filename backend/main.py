@@ -14,9 +14,10 @@ from config import load_settings
 from detector import Detector
 from face_db import FaceDB
 from face_service import FaceService
+from pose_service import PoseService
 from action_service import ActionService
 from audio_alert_service import AudioAlertService
-from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService
+from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService, PoseTrackingService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -40,11 +41,13 @@ async def lifespan(app: FastAPI):
     face_recognition_service.start()
     emotion_service.start()
     action_tracking_service.start()
+    pose_tracking_service.start()
     audio_alert_service.start()
     try:
         yield
     finally:
         audio_alert_service.stop()
+        pose_tracking_service.stop()
         action_tracking_service.stop()
         emotion_service.stop()
         face_recognition_service.stop()
@@ -64,7 +67,13 @@ app.add_middleware(
 
 camera = Camera(index=settings.camera_index)
 
-detector = Detector(model_path=settings.model_path, use_gpu=settings.use_gpu)
+detector = Detector(
+    model_path=settings.model_path,
+    use_gpu=settings.use_gpu,
+    motion_pixel_threshold=settings.motion_pixel_threshold,
+    motion_min_pixels=settings.motion_min_pixels,
+    face_after_motion_seconds=settings.face_after_motion_seconds,
+)
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
 
@@ -87,6 +96,7 @@ face_recognition_service = FaceRecognitionService(
     unknown_threshold=settings.face_unknown_threshold,
     interval_s=settings.face_recognition_interval,
     security_unknown_seconds=settings.security_unknown_seconds,
+    post_face_window_s=settings.post_face_window_s,
 )
 
 emotion_service = EmotionService(
@@ -105,12 +115,25 @@ action_service = ActionService(
     use_gpu=settings.use_gpu,
 )
 
+pose_service = PoseService(
+    model_path=settings.pose_model_path,
+    use_gpu=settings.use_gpu,
+)
+
 action_tracking_service = ActionTrackingService(
     detector=detector,
     action_service=action_service,
     face_db=face_db,
     interval_s=settings.action_interval,
     threshold=settings.action_conf_threshold,
+)
+
+pose_tracking_service = PoseTrackingService(
+    detector=detector,
+    pose_service=pose_service,
+    face_db=face_db,
+    interval_s=settings.pose_interval,
+    threshold=settings.pose_conf_threshold,
 )
 
 audio_alert_service = AudioAlertService(
@@ -135,6 +158,11 @@ async def health() -> JSONResponse:
             "camera": camera.is_opened(),
             "model": detector.is_ready(),
             "uploader": uploader.enabled,
+            "motion": detector.has_motion(),
+            "person": detector.has_person(),
+            "face_window": detector.can_run_face_pipeline(),
+            "post_face_pipeline": detector.can_run_post_face_pipeline(),
+            "pose_enabled": pose_service.enabled,
         }
     )
 
@@ -276,6 +304,7 @@ async def face_recognize(
             }
         )
     matches = best_overall
+    detector.open_post_face_window(settings.post_face_window_s)
     return JSONResponse(
         {
             "ok": True,
@@ -289,6 +318,14 @@ async def face_recognize(
 @app.get("/face/last")
 async def face_last():
     return JSONResponse({"ok": True, "result": face_recognition_service.get_last()})
+
+
+@app.get("/face/last-crop")
+async def face_last_crop():
+    crop = face_recognition_service.get_last_face_crop()
+    if not crop:
+        raise HTTPException(status_code=404, detail="no_face_crop")
+    return Response(content=crop, media_type="image/jpeg")
 
 
 @app.get("/security/last")
@@ -401,3 +438,8 @@ async def action_last():
 @app.get("/audio/last")
 async def audio_last():
     return JSONResponse({"ok": True, "result": audio_alert_service.get_last()})
+
+
+@app.get("/pose/last")
+async def pose_last():
+    return JSONResponse({"ok": True, "result": pose_tracking_service.get_last(), "enabled": pose_service.enabled})
