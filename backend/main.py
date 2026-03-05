@@ -73,6 +73,7 @@ detector = Detector(
     motion_pixel_threshold=settings.motion_pixel_threshold,
     motion_min_pixels=settings.motion_min_pixels,
     face_after_motion_seconds=settings.face_after_motion_seconds,
+    fallback_models=settings.auto_model_candidates,
 )
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
@@ -113,10 +114,13 @@ action_service = ActionService(
     window_s=settings.action_window_s,
     frames=settings.action_frames,
     use_gpu=settings.use_gpu,
+    model_path=settings.action_model_path,
+    model_url=settings.action_model_url,
 )
 
 pose_service = PoseService(
     model_path=settings.pose_model_path,
+    model_url=settings.pose_model_url,
     use_gpu=settings.use_gpu,
 )
 
@@ -157,12 +161,16 @@ async def health() -> JSONResponse:
             "ok": True,
             "camera": camera.is_opened(),
             "model": detector.is_ready(),
+            "model_source": detector.get_model_source(),
             "uploader": uploader.enabled,
             "motion": detector.has_motion(),
             "person": detector.has_person(),
             "face_window": detector.can_run_face_pipeline(),
             "post_face_pipeline": detector.can_run_post_face_pipeline(),
             "pose_enabled": pose_service.enabled,
+            "pose_backend": pose_service.backend,
+            "pose_error": pose_service.load_error,
+            "action_backend": action_service.backend,
         }
     )
 

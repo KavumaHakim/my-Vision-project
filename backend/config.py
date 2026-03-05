@@ -10,6 +10,7 @@ load_dotenv()
 class Settings:
     model_path: str
     model_type: str
+    auto_model_candidates: list[str]
     supabase_url: str | None
     supabase_key: str | None
     image_capture_interval: int
@@ -28,6 +29,8 @@ class Settings:
     action_interval: int
     action_window_s: float
     action_frames: int
+    action_model_path: str | None
+    action_model_url: str | None
     action_conf_threshold: float
     audio_interval: int
     audio_window_s: float
@@ -44,6 +47,7 @@ class Settings:
     face_after_motion_seconds: float
     post_face_window_s: float
     pose_model_path: str | None
+    pose_model_url: str | None
     pose_interval: int
     pose_conf_threshold: float
 
@@ -58,6 +62,11 @@ def _get_bool(name: str, default: bool) -> bool:
 def load_settings() -> Settings:
     model_path = os.getenv("MODEL_PATH", "").strip()
     model_type = os.getenv("MODEL_TYPE", "yolov8").strip()
+    auto_model_candidates = [
+        item.strip()
+        for item in os.getenv("AUTO_MODEL_CANDIDATES", "yolo11n.pt,yolov8n.pt").split(",")
+        if item.strip()
+    ]
     supabase_url = os.getenv("SUPABASE_URL", "").strip() or None
     supabase_key = os.getenv("SUPABASE_ANON_KEY", "").strip() or None
     image_capture_interval = int(os.getenv("IMAGE_CAPTURE_INTERVAL", "30").strip())
@@ -79,6 +88,11 @@ def load_settings() -> Settings:
     action_interval = int(os.getenv("ACTION_INTERVAL", "10").strip())
     action_window_s = float(os.getenv("ACTION_WINDOW_S", "2.0").strip())
     action_frames = int(os.getenv("ACTION_FRAMES", "16").strip())
+    action_model_path = os.getenv("ACTION_MODEL_PATH", os.getenv("POSE_MODEL_PATH", "")).strip() or None
+    action_model_url = os.getenv(
+        "ACTION_MODEL_URL",
+        "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt",
+    ).strip() or None
     action_conf_threshold = float(os.getenv("ACTION_CONF_THRESHOLD", "0.95").strip())
     audio_interval = int(os.getenv("AUDIO_INTERVAL", "5").strip())
     audio_window_s = float(os.getenv("AUDIO_WINDOW_S", "2.0").strip())
@@ -102,12 +116,20 @@ def load_settings() -> Settings:
     face_after_motion_seconds = float(os.getenv("FACE_AFTER_MOTION_SECONDS", "10.0").strip())
     post_face_window_s = float(os.getenv("POST_FACE_WINDOW_S", "8.0").strip())
     pose_model_path = os.getenv("POSE_MODEL_PATH", "").strip() or None
+    pose_model_url = os.getenv(
+        "POSE_MODEL_URL",
+        os.getenv(
+            "ACTION_MODEL_URL",
+            "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt",
+        ),
+    ).strip() or None
     pose_interval = int(os.getenv("POSE_INTERVAL", "10").strip())
     pose_conf_threshold = float(os.getenv("POSE_CONF_THRESHOLD", "0.25").strip())
 
     return Settings(
         model_path=model_path,
         model_type=model_type,
+        auto_model_candidates=auto_model_candidates,
         supabase_url=supabase_url,
         supabase_key=supabase_key,
         image_capture_interval=image_capture_interval,
@@ -126,6 +148,8 @@ def load_settings() -> Settings:
         action_interval=action_interval,
         action_window_s=action_window_s,
         action_frames=action_frames,
+        action_model_path=action_model_path,
+        action_model_url=action_model_url,
         action_conf_threshold=action_conf_threshold,
         audio_interval=audio_interval,
         audio_window_s=audio_window_s,
@@ -142,6 +166,7 @@ def load_settings() -> Settings:
         face_after_motion_seconds=face_after_motion_seconds,
         post_face_window_s=post_face_window_s,
         pose_model_path=pose_model_path,
+        pose_model_url=pose_model_url,
         pose_interval=pose_interval,
         pose_conf_threshold=pose_conf_threshold,
     )

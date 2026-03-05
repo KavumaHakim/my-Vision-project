@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from typing import Any
@@ -11,6 +13,8 @@ from ultralytics import YOLO
 
 from utils import now_utc
 
+logger = logging.getLogger("vision-v1.detector")
+
 
 class Detector:
     def __init__(
@@ -20,10 +24,29 @@ class Detector:
         motion_pixel_threshold: int = 25,
         motion_min_pixels: int = 5000,
         face_after_motion_seconds: float = 10.0,
+        fallback_models: list[str] | None = None,
     ) -> None:
-        if not model_path:
-            raise RuntimeError("MODEL_PATH is required")
-        self.model = YOLO(model_path)
+        model_candidates = self._model_candidates(model_path, fallback_models or [])
+        if not model_candidates:
+            raise RuntimeError("No valid model candidates were provided")
+
+        self.model = None
+        self.model_source = None
+        last_error: Exception | None = None
+        for candidate in model_candidates:
+            try:
+                self.model = YOLO(candidate)
+                self.model_source = candidate
+                logger.info("Loaded detection model: %s", candidate)
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Failed model candidate '%s': %s", candidate, exc)
+
+        if self.model is None:
+            joined = ", ".join(model_candidates)
+            raise RuntimeError(f"Failed to load any detection model candidate: {joined}") from last_error
+
         self.device = "cuda" if use_gpu else "cpu"
         self.model.to(self.device)
         self.motion_pixel_threshold = max(1, int(motion_pixel_threshold))
@@ -46,6 +69,35 @@ class Detector:
         self._thread: threading.Thread | None = None
         self._ready = False
 
+    @staticmethod
+    def _is_remote(source: str) -> bool:
+        return source.startswith(("http://", "https://"))
+
+    @staticmethod
+    def _has_local_hint(source: str) -> bool:
+        if source.startswith("."):
+            return True
+        if os.path.sep in source:
+            return True
+        if os.path.altsep and os.path.altsep in source:
+            return True
+        return False
+
+    @classmethod
+    def _model_candidates(cls, model_path: str, fallbacks: list[str]) -> list[str]:
+        candidates: list[str] = []
+        path = (model_path or "").strip()
+        if path:
+            if cls._is_remote(path) or os.path.exists(path) or not cls._has_local_hint(path):
+                candidates.append(path)
+            else:
+                logger.warning("MODEL_PATH '%s' not found. Falling back to auto-download candidates.", path)
+        for item in fallbacks:
+            name = (item or "").strip()
+            if name and name not in candidates:
+                candidates.append(name)
+        return candidates
+
     def start(self, frame_source) -> None:
         if self._thread is not None:
             return
@@ -59,6 +111,9 @@ class Detector:
 
     def is_ready(self) -> bool:
         return self._ready
+
+    def get_model_source(self) -> str | None:
+        return self.model_source
 
     def get_latest(self) -> tuple[str | None, list[dict[str, Any]]]:
         with self._lock:

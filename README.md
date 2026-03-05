@@ -18,6 +18,7 @@ copy backend\.env.example backend\.env
 ```
 
 4. Download a YOLOv8 model (example: `yolov8n.pt`) and set `MODEL_PATH` in `backend/.env`.
+   - If `MODEL_PATH` is missing or not found, backend auto-falls back to `AUTO_MODEL_CANDIDATES` and downloads the first available lightweight model.
 
 5. Start the backend:
 
@@ -82,4 +83,8 @@ Options:
 - Captures are stored in Supabase under `captures/YYYY/MM/DD/`.
 - Resource-saving pipeline order: motion -> person stage -> face stage -> full object/action/pose stage.
 - Face recognition runs when a person is detected, for `FACE_AFTER_MOTION_SECONDS` after motion first appears.
-- Pose tracking is optional and enabled only when `POSE_MODEL_PATH` is set.
+- Action and pose can both run on YOLO pose models (for example `yolo26pose`) via `ACTION_MODEL_PATH` and `POSE_MODEL_PATH`.
+- If `ACTION_MODEL_PATH` is missing locally, backend downloads it from `ACTION_MODEL_URL` (default: `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt`) and stores it at the configured action model path.
+- If `POSE_MODEL_PATH` is missing locally, backend downloads it from `POSE_MODEL_URL` (default: `https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt`) and stores it at the configured pose model path.
+- Set lightweight fallback order with `AUTO_MODEL_CANDIDATES` (default: `yolo11n.pt,yolov8n.pt`).
+- `yolo26n-pose.pt` requires `ultralytics>=8.4.0`.

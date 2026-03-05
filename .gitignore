@@ -7,3 +7,6 @@ frontend/node_modules
 __pycache__/
 *.pyc
 backend/captures/
+backend/path/to/
+backend/.tmp/
+backend/.uv-cache/
