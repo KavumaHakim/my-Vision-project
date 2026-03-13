@@ -58,11 +58,23 @@ class ActionService:
                 logger.warning("Failed to initialize YOLO pose action backend: %s. Falling back to r2plus1d.", exc)
 
         if self.backend == "r2plus1d":
-            self._weights = R2Plus1D_18_Weights.DEFAULT
-            self._model = r2plus1d_18(weights=self._weights).to(self.device)
-            self._model.eval()
-            self._preprocess = self._weights.transforms()
-            self._categories = self._weights.meta["categories"]
+            try:
+                self._weights = R2Plus1D_18_Weights.DEFAULT
+                self._model = r2plus1d_18(weights=self._weights).to(self.device)
+                self._model.eval()
+                self._preprocess = self._weights.transforms()
+                self._categories = self._weights.meta["categories"]
+            except Exception as exc:
+                logger.warning(
+                    "Failed to initialize r2plus1d action backend (likely offline weights fetch issue): %s. "
+                    "Action service disabled.",
+                    exc,
+                )
+                self.backend = "disabled"
+                self._weights = None
+                self._model = None
+                self._preprocess = None
+                self._categories = None
 
         self._stop = False
         self._last_result: dict[str, Any] | None = None
@@ -242,4 +254,6 @@ class ActionService:
             return None
         if self.backend == "yolo_pose":
             return self._run_pose_action(clip)
-        return self._run_video_classifier(clip)
+        if self.backend == "r2plus1d":
+            return self._run_video_classifier(clip)
+        return None

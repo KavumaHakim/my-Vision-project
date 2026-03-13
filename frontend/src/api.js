@@ -77,6 +77,49 @@ export async function getPoseLast() {
   return data;
 }
 
+export async function getCrowdLast() {
+  const res = await fetch(`${BASE}/crowd/last`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "crowd_last_failed");
+  return data;
+}
+
+export async function getModelToggles() {
+  const res = await fetch(`${BASE}/models/toggles`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "model_toggles_failed");
+  return data;
+}
+
+export async function updateModelToggles(patch) {
+  const res = await fetch(`${BASE}/models/toggles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "model_toggles_update_failed");
+  return data;
+}
+
+export async function getCameraSource() {
+  const res = await fetch(`${BASE}/camera/source`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "camera_source_failed");
+  return data;
+}
+
+export async function setCameraSource(source) {
+  const res = await fetch(`${BASE}/camera/source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || data?.detail || "camera_source_set_failed");
+  return data;
+}
+
 export async function getSecurityLast() {
   const res = await fetch(`${BASE}/security/last`);
   const data = await res.json();

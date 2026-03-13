@@ -24,6 +24,7 @@ class AudioAlertService:
         sample_rate: int,
         device: str | int | None,
         local_model: str | None,
+        is_enabled=None,
     ) -> None:
         self.face_db = face_db
         self.hf_url = hf_url
@@ -35,6 +36,7 @@ class AudioAlertService:
         self.sample_rate = int(sample_rate)
         self.device = device
         self.local_model = local_model
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -128,6 +130,8 @@ class AudioAlertService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
             wav_bytes = self._record_wav()
             if not wav_bytes:
                 continue

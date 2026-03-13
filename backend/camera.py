@@ -8,14 +8,26 @@ import time
 class Camera:
     def __init__(self, index: int = 0) -> None:
         self.index = index
+        self._source: int | str = index
         self._cap: cv2.VideoCapture | None = None
         self._lock = threading.Lock()
+
+    def get_source(self) -> int | str:
+        with self._lock:
+            return self._source
+
+    def set_source(self, source: int | str) -> None:
+        with self._lock:
+            self._source = source
+            if self._cap is not None:
+                self._cap.release()
+                self._cap = None
 
     def open(self) -> None:
         with self._lock:
             if self._cap is not None and self._cap.isOpened():
                 return
-            cap = cv2.VideoCapture(self.index)
+            cap = cv2.VideoCapture(self._source)
             if not cap.isOpened():
                 cap.release()
                 raise RuntimeError("Failed to open camera")

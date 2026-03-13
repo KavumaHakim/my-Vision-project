@@ -8,6 +8,8 @@ import TimelinePanel from "./components/TimelinePanel.jsx";
 import ActionPanel from "./components/ActionPanel.jsx";
 import AudioPanel from "./components/AudioPanel.jsx";
 import ModelDashboard from "./components/ModelDashboard.jsx";
+import CrowdPanel from "./components/CrowdPanel.jsx";
+import CameraSourceDialog from "./components/CameraSourceDialog.jsx";
 import LoginPage from "./components/LoginPage.jsx";
 import DemosPage from "./components/DemosPage.jsx";
 import SecurityDemoPanel from "./components/SecurityDemoPanel.jsx";
@@ -34,6 +36,11 @@ const PAGES = [
     id: "intelligence",
     label: "Intelligence",
     blurb: "Action, audio, and emotion model outputs."
+  },
+  {
+    id: "analytics",
+    label: "Crowd Analytics",
+    blurb: "Fused object and pose behavior analysis."
   },
   {
     id: "timeline",
@@ -64,7 +71,7 @@ function OverviewPage({ health }) {
       <section className="card model-dashboard-card">
         <ModelDashboard health={health} />
       </section>
-      <section className="card">
+      <section className="card live-stream-card">
         <h2>Live Stream</h2>
         <VideoStream />
       </section>
@@ -80,6 +87,10 @@ function OverviewPage({ health }) {
         <h2>Audio Snapshot</h2>
         <AudioPanel />
       </section>
+      <section className="card">
+        <h2>Crowd Snapshot</h2>
+        <CrowdPanel />
+      </section>
     </div>
   );
 }
@@ -87,7 +98,7 @@ function OverviewPage({ health }) {
 function VisionOpsPage() {
   return (
     <div className="page-grid">
-      <section className="card">
+      <section className="card live-stream-card">
         <h2>Live Stream</h2>
         <VideoStream />
       </section>
@@ -141,6 +152,25 @@ function IntelligencePage() {
   );
 }
 
+function CrowdAnalyticsPage() {
+  return (
+    <div className="page-grid">
+      <section className="card">
+        <h2>Behavior and Crowd Analysis</h2>
+        <CrowdPanel />
+      </section>
+      <section className="card">
+        <h2>Live Detection Feed</h2>
+        <DetectionPanel />
+      </section>
+      <section className="card">
+        <h2>Pose and Action Snapshot</h2>
+        <ActionPanel />
+      </section>
+    </div>
+  );
+}
+
 function TimelinePage() {
   return (
     <div className="page-grid">
@@ -165,6 +195,7 @@ export default function App() {
   });
   const [session, setSession] = useState(null);
   const [page, setPage] = useState("overview");
+  const [showCameraDialog, setShowCameraDialog] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -194,6 +225,7 @@ export default function App() {
   const handleLogin = (user) => {
     setSession(user);
     setPage("overview");
+    setShowCameraDialog(true);
   };
 
   let content = null;
@@ -201,6 +233,7 @@ export default function App() {
   if (page === "vision") content = <VisionOpsPage />;
   if (page === "identity") content = <IdentityPage />;
   if (page === "intelligence") content = <IntelligencePage />;
+  if (page === "analytics") content = <CrowdAnalyticsPage />;
   if (page === "timeline") content = <TimelinePage />;
   if (page === "demos") content = <DemosPage />;
 
@@ -214,6 +247,7 @@ export default function App() {
 
   return (
     <div className="workspace-shell">
+      <CameraSourceDialog open={showCameraDialog} onClose={() => setShowCameraDialog(false)} />
       <aside className="workspace-sidebar">
         <div className="sidebar-brand">
           <span className="dot" />
@@ -240,6 +274,9 @@ export default function App() {
           <div className="session-user">
             {session.name} <span>{session.score.toFixed(2)}</span>
           </div>
+          <button className="ghost" onClick={() => setShowCameraDialog(true)}>
+            Camera Source
+          </button>
           <button
             className="ghost"
             onClick={() => {

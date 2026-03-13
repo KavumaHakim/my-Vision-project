@@ -25,6 +25,7 @@ class Detector:
         motion_min_pixels: int = 5000,
         face_after_motion_seconds: float = 10.0,
         fallback_models: list[str] | None = None,
+        is_enabled=None,
     ) -> None:
         model_candidates = self._model_candidates(model_path, fallback_models or [])
         if not model_candidates:
@@ -43,15 +44,20 @@ class Detector:
                 last_error = exc
                 logger.warning("Failed model candidate '%s': %s", candidate, exc)
 
+        self._model_ready = self.model is not None
         if self.model is None:
             joined = ", ".join(model_candidates)
-            raise RuntimeError(f"Failed to load any detection model candidate: {joined}") from last_error
-
+            logger.error(
+                "No detection model could be loaded (%s). Running in motion-only mode until a model is available.",
+                joined,
+            )
         self.device = "cuda" if use_gpu else "cpu"
-        self.model.to(self.device)
+        if self.model is not None:
+            self.model.to(self.device)
         self.motion_pixel_threshold = max(1, int(motion_pixel_threshold))
         self.motion_min_pixels = max(100, int(motion_min_pixels))
         self.face_after_motion_seconds = max(1.0, float(face_after_motion_seconds))
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
@@ -110,7 +116,7 @@ class Detector:
             self._thread.join(timeout=2)
 
     def is_ready(self) -> bool:
-        return self._ready
+        return self._model_ready
 
     def get_model_source(self) -> str | None:
         return self.model_source
@@ -231,7 +237,7 @@ class Detector:
             detections: list[dict[str, Any]] = []
             person_present = False
 
-            if motion_detected or now_ts < self._face_after_motion_until:
+            if self.model is not None and self._is_enabled() and (motion_detected or now_ts < self._face_after_motion_until):
                 run_full_detection = self.can_run_post_face_pipeline()
                 results = self.model.predict(
                     source=frame,

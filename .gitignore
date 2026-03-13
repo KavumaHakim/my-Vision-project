@@ -1,4 +1,5 @@
 frontend/node_modules
+frontend/dist/
 .env
 .env.local
 .env.development
@@ -10,3 +11,4 @@ backend/captures/
 backend/path/to/
 backend/.tmp/
 backend/.uv-cache/
+backend/faces.db

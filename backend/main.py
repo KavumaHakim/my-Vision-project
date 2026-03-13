@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
+from fastapi import Body, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import cv2
@@ -17,7 +17,15 @@ from face_service import FaceService
 from pose_service import PoseService
 from action_service import ActionService
 from audio_alert_service import AudioAlertService
-from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService, PoseTrackingService
+from scheduler import (
+    ActionTrackingService,
+    BehaviorCrowdService,
+    CaptureService,
+    EmotionService,
+    FaceRecognitionService,
+    PoseTrackingService,
+)
+from runtime_toggles import RuntimeModelToggles
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -42,11 +50,13 @@ async def lifespan(app: FastAPI):
     emotion_service.start()
     action_tracking_service.start()
     pose_tracking_service.start()
+    crowd_service.start()
     audio_alert_service.start()
     try:
         yield
     finally:
         audio_alert_service.stop()
+        crowd_service.stop()
         pose_tracking_service.stop()
         action_tracking_service.stop()
         emotion_service.stop()
@@ -66,6 +76,24 @@ app.add_middleware(
 )
 
 camera = Camera(index=settings.camera_index)
+model_toggles = RuntimeModelToggles()
+
+
+def _is_enabled(key: str):
+    return lambda: model_toggles.is_enabled(key)
+
+
+def _normalize_camera_source(value: str | int | None) -> int | str:
+    if value is None:
+        return settings.camera_index
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return settings.camera_index
+    if text.isdigit():
+        return int(text)
+    return text
 
 detector = Detector(
     model_path=settings.model_path,
@@ -74,6 +102,7 @@ detector = Detector(
     motion_min_pixels=settings.motion_min_pixels,
     face_after_motion_seconds=settings.face_after_motion_seconds,
     fallback_models=settings.auto_model_candidates,
+    is_enabled=_is_enabled("object_detection"),
 )
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
@@ -98,6 +127,7 @@ face_recognition_service = FaceRecognitionService(
     interval_s=settings.face_recognition_interval,
     security_unknown_seconds=settings.security_unknown_seconds,
     post_face_window_s=settings.post_face_window_s,
+    is_enabled=_is_enabled("face_recognition"),
 )
 
 emotion_service = EmotionService(
@@ -106,6 +136,7 @@ emotion_service = EmotionService(
     hf_token=settings.hf_token,
     interval_s=settings.face_recognition_interval,
     threshold=settings.emotion_conf_threshold,
+    is_enabled=_is_enabled("emotion"),
 )
 
 action_service = ActionService(
@@ -130,6 +161,7 @@ action_tracking_service = ActionTrackingService(
     face_db=face_db,
     interval_s=settings.action_interval,
     threshold=settings.action_conf_threshold,
+    is_enabled=_is_enabled("action_tracking"),
 )
 
 pose_tracking_service = PoseTrackingService(
@@ -138,6 +170,21 @@ pose_tracking_service = PoseTrackingService(
     face_db=face_db,
     interval_s=settings.pose_interval,
     threshold=settings.pose_conf_threshold,
+    is_enabled=_is_enabled("pose_tracking"),
+)
+
+crowd_service = BehaviorCrowdService(
+    detector=detector,
+    pose_service=pose_service,
+    face_db=face_db,
+    interval_s=settings.crowd_interval,
+    pose_conf_threshold=settings.pose_conf_threshold,
+    behavior_threshold=settings.crowd_behavior_threshold,
+    medium_count=settings.crowd_medium_count,
+    high_count=settings.crowd_high_count,
+    medium_occupancy=settings.crowd_medium_occupancy,
+    high_occupancy=settings.crowd_high_occupancy,
+    is_enabled=_is_enabled("crowd_analysis"),
 )
 
 audio_alert_service = AudioAlertService(
@@ -151,15 +198,19 @@ audio_alert_service = AudioAlertService(
     sample_rate=settings.audio_sample_rate,
     device=settings.audio_device,
     local_model=settings.audio_local_model,
+    is_enabled=_is_enabled("audio_alerts"),
 )
 
 
 @app.get("/health")
 async def health() -> JSONResponse:
+    crowd_last = crowd_service.get_last() or {}
+    crowd_data = crowd_last.get("crowd") or {}
     return JSONResponse(
         {
             "ok": True,
             "camera": camera.is_opened(),
+            "camera_source": camera.get_source(),
             "model": detector.is_ready(),
             "model_source": detector.get_model_source(),
             "uploader": uploader.enabled,
@@ -167,12 +218,47 @@ async def health() -> JSONResponse:
             "person": detector.has_person(),
             "face_window": detector.can_run_face_pipeline(),
             "post_face_pipeline": detector.can_run_post_face_pipeline(),
+            "face_model_enabled": face_service.enabled,
+            "face_model_error": face_service.load_error,
             "pose_enabled": pose_service.enabled,
             "pose_backend": pose_service.backend,
             "pose_error": pose_service.load_error,
             "action_backend": action_service.backend,
+            "crowd_risk": crowd_data.get("risk"),
+            "crowd_level": crowd_data.get("level"),
+            "model_toggles": model_toggles.get_all(),
         }
     )
+
+
+@app.get("/camera/source")
+async def camera_source_get():
+    return JSONResponse({"ok": True, "source": camera.get_source()})
+
+
+@app.post("/camera/source")
+async def camera_source_set(payload: dict[str, str | int | None] = Body(...)):
+    source = _normalize_camera_source(payload.get("source"))
+    try:
+        camera.set_source(source)
+        camera.open()
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "source": source}, status_code=422)
+    return JSONResponse({"ok": True, "source": source})
+
+
+@app.get("/models/toggles")
+async def model_toggles_get():
+    return JSONResponse({"ok": True, "toggles": model_toggles.get_all()})
+
+
+@app.post("/models/toggles")
+async def model_toggles_update(payload: dict[str, bool] = Body(...)):
+    try:
+        updated = model_toggles.set_many(payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"unknown_model_toggle:{exc.args[0]}")
+    return JSONResponse({"ok": True, "toggles": updated})
 
 
 @app.get("/video-stream")
@@ -451,3 +537,8 @@ async def audio_last():
 @app.get("/pose/last")
 async def pose_last():
     return JSONResponse({"ok": True, "result": pose_tracking_service.get_last(), "enabled": pose_service.enabled})
+
+
+@app.get("/crowd/last")
+async def crowd_last():
+    return JSONResponse({"ok": True, "result": crowd_service.get_last()})

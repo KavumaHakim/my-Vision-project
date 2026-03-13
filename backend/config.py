@@ -50,6 +50,12 @@ class Settings:
     pose_model_url: str | None
     pose_interval: int
     pose_conf_threshold: float
+    crowd_interval: int
+    crowd_behavior_threshold: float
+    crowd_medium_count: int
+    crowd_high_count: int
+    crowd_medium_occupancy: float
+    crowd_high_occupancy: float
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -125,6 +131,12 @@ def load_settings() -> Settings:
     ).strip() or None
     pose_interval = int(os.getenv("POSE_INTERVAL", "10").strip())
     pose_conf_threshold = float(os.getenv("POSE_CONF_THRESHOLD", "0.25").strip())
+    crowd_interval = int(os.getenv("CROWD_INTERVAL", str(pose_interval)).strip())
+    crowd_behavior_threshold = float(os.getenv("CROWD_BEHAVIOR_THRESHOLD", "0.55").strip())
+    crowd_medium_count = int(os.getenv("CROWD_MEDIUM_COUNT", "4").strip())
+    crowd_high_count = int(os.getenv("CROWD_HIGH_COUNT", "8").strip())
+    crowd_medium_occupancy = float(os.getenv("CROWD_MEDIUM_OCCUPANCY", "0.18").strip())
+    crowd_high_occupancy = float(os.getenv("CROWD_HIGH_OCCUPANCY", "0.35").strip())
 
     return Settings(
         model_path=model_path,
@@ -169,4 +181,10 @@ def load_settings() -> Settings:
         pose_model_url=pose_model_url,
         pose_interval=pose_interval,
         pose_conf_threshold=pose_conf_threshold,
+        crowd_interval=crowd_interval,
+        crowd_behavior_threshold=crowd_behavior_threshold,
+        crowd_medium_count=crowd_medium_count,
+        crowd_high_count=crowd_high_count,
+        crowd_medium_occupancy=crowd_medium_occupancy,
+        crowd_high_occupancy=crowd_high_occupancy,
     )

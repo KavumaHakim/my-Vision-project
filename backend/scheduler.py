@@ -99,6 +99,7 @@ class FaceRecognitionService:
         interval_s: int,
         security_unknown_seconds: int,
         post_face_window_s: float,
+        is_enabled=None,
     ) -> None:
         self.detector = detector
         self.face_service = face_service
@@ -108,6 +109,7 @@ class FaceRecognitionService:
         self.interval_s = max(5, int(interval_s))
         self.security_unknown_seconds = max(1, int(security_unknown_seconds))
         self.post_face_window_s = max(1.0, float(post_face_window_s))
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -197,6 +199,8 @@ class FaceRecognitionService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
             if not self.detector.can_run_face_pipeline():
                 continue
             if not self.detector.has_person():
@@ -334,12 +338,14 @@ class EmotionService:
         hf_token: str | None,
         interval_s: int,
         threshold: float,
+        is_enabled=None,
     ) -> None:
         self.detector = detector
         self.hf_url = hf_url
         self.hf_token = hf_token
         self.interval_s = max(5, int(interval_s))
         self.threshold = float(threshold)
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -370,6 +376,8 @@ class EmotionService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
             if not self.detector.has_label("person"):
                 continue
             frame = self.detector.get_latest_frame(annotated=False)
@@ -419,12 +427,13 @@ class EmotionService:
 
 
 class ActionTrackingService:
-    def __init__(self, detector, action_service, face_db, interval_s: int, threshold: float) -> None:
+    def __init__(self, detector, action_service, face_db, interval_s: int, threshold: float, is_enabled=None) -> None:
         self.detector = detector
         self.action_service = action_service
         self.face_db = face_db
         self.interval_s = max(5, int(interval_s))
         self.threshold = float(threshold)
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -453,6 +462,8 @@ class ActionTrackingService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
             if not self.detector.can_run_post_face_pipeline():
                 continue
             if not self.detector.has_motion():
@@ -476,12 +487,14 @@ class ActionTrackingService:
 
 
 class PoseTrackingService:
-    def __init__(self, detector, pose_service, face_db, interval_s: int, threshold: float) -> None:
+    def __init__(self, detector, pose_service, face_db, interval_s: int, threshold: float, is_enabled=None) -> None:
         self.detector = detector
         self.pose_service = pose_service
         self.face_db = face_db
         self.interval_s = max(5, int(interval_s))
         self.threshold = float(threshold)
+        self.action_threshold = max(0.5, float(threshold))
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -512,6 +525,8 @@ class PoseTrackingService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
             if not self.detector.can_run_post_face_pipeline():
                 continue
             if not self.detector.has_motion():
@@ -523,6 +538,7 @@ class PoseTrackingService:
             if not result:
                 continue
             poses = result.get("poses") or []
+            actions = result.get("actions") or []
             if poses:
                 self.face_db.add_event(
                     event_type="pose_detected",
@@ -532,5 +548,223 @@ class PoseTrackingService:
                     score=float(poses[0].get("confidence", 0.0)),
                     bbox=None,
                 )
-            payload = {"ok": True, "poses": poses, "timestamp": now_utc().isoformat()}
+
+            pose_by_track: dict[int, dict[str, Any]] = {}
+            for pose in poses:
+                track_id = pose.get("track_id")
+                if isinstance(track_id, int):
+                    pose_by_track[track_id] = pose
+
+            for action in actions:
+                label = str(action.get("label") or "")
+                score = float(action.get("score", 0.0))
+                if label in {"", "standing"} or score < self.action_threshold:
+                    continue
+                track_id = action.get("track_id")
+                bbox = None
+                if isinstance(track_id, int) and track_id in pose_by_track:
+                    bbox = pose_by_track[track_id].get("bbox")
+                name = f"{label}#t{track_id}" if isinstance(track_id, int) else label
+                self.face_db.add_event(
+                    event_type="pose_action_detected",
+                    face_type="pose_action",
+                    face_id=None,
+                    name=name,
+                    score=score,
+                    bbox=bbox,
+                )
+
+            payload = {
+                "ok": True,
+                "poses": poses,
+                "actions": actions,
+                "best_action": result.get("best_action"),
+                "timestamp": now_utc().isoformat(),
+            }
+            self._set_last(payload)
+
+
+class BehaviorCrowdService:
+    def __init__(
+        self,
+        detector,
+        pose_service,
+        face_db,
+        interval_s: int,
+        pose_conf_threshold: float,
+        behavior_threshold: float,
+        medium_count: int,
+        high_count: int,
+        medium_occupancy: float,
+        high_occupancy: float,
+        is_enabled=None,
+    ) -> None:
+        self.detector = detector
+        self.pose_service = pose_service
+        self.face_db = face_db
+        self.interval_s = max(3, int(interval_s))
+        self.pose_conf_threshold = max(0.05, float(pose_conf_threshold))
+        self.behavior_threshold = max(0.05, float(behavior_threshold))
+        self.medium_count = max(1, int(medium_count))
+        self.high_count = max(self.medium_count + 1, int(high_count))
+        self.medium_occupancy = max(0.01, float(medium_occupancy))
+        self.high_occupancy = max(self.medium_occupancy + 0.01, float(high_occupancy))
+        self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
+
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._last_result: dict[str, Any] | None = None
+        self._last_alert_ts = 0.0
+        self._alert_cooldown_s = 20.0
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def get_last(self) -> dict[str, Any] | None:
+        with self._lock:
+            return dict(self._last_result) if self._last_result else None
+
+    def _set_last(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._last_result = payload
+
+    def _crowd_level(self, people: int, occupancy: float) -> str:
+        if people >= self.high_count or occupancy >= self.high_occupancy:
+            return "high"
+        if people >= self.medium_count or occupancy >= self.medium_occupancy:
+            return "medium"
+        if people > 0:
+            return "low"
+        return "none"
+
+    @staticmethod
+    def _clip01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def _risk_level(self, crowd_level: str, agitation: float) -> str:
+        if crowd_level == "high" and agitation >= 0.45:
+            return "high"
+        if crowd_level in {"medium", "high"} and agitation >= 0.25:
+            return "elevated"
+        if crowd_level == "high" or agitation >= 0.2:
+            return "watch"
+        return "normal"
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            time.sleep(self.interval_s)
+            if not self._is_enabled():
+                continue
+            if not (self.detector.has_motion() or self.detector.can_run_post_face_pipeline()):
+                continue
+            frame = self.detector.get_latest_frame(annotated=False)
+            if frame is None:
+                continue
+            _, detections = self.detector.get_latest()
+            object_counts: dict[str, int] = {}
+            person_detections: list[dict[str, Any]] = []
+            for det in detections:
+                label = str(det.get("label") or "unknown")
+                object_counts[label] = object_counts.get(label, 0) + 1
+                if label == "person":
+                    person_detections.append(det)
+
+            frame_area = max(1.0, float(frame.shape[0] * frame.shape[1]))
+            person_area = 0.0
+            for det in person_detections:
+                bbox = det.get("bbox") or [0, 0, 0, 0]
+                if len(bbox) != 4:
+                    continue
+                w = max(0.0, float(bbox[2]))
+                h = max(0.0, float(bbox[3]))
+                person_area += w * h
+
+            pose_result = None
+            poses: list[dict[str, Any]] = []
+            actions: list[dict[str, Any]] = []
+            if self.pose_service.enabled:
+                pose_result = self.pose_service.run_once(frame, conf_threshold=self.pose_conf_threshold) or {}
+                poses = list(pose_result.get("poses") or [])
+                actions = list(pose_result.get("actions") or [])
+                if person_area <= 0.0:
+                    for pose in poses:
+                        bbox = pose.get("bbox") or [0, 0, 0, 0]
+                        if len(bbox) != 4:
+                            continue
+                        person_area += max(0.0, float(bbox[2])) * max(0.0, float(bbox[3]))
+
+            people_from_detection = len(person_detections)
+            people_from_pose = len(poses)
+            people_estimate = max(people_from_detection, people_from_pose)
+            occupancy_ratio = self._clip01(person_area / frame_area)
+            crowd_level = self._crowd_level(people_estimate, occupancy_ratio)
+
+            behavior_counts = {
+                "moving": 0,
+                "hand_raised": 0,
+                "bending": 0,
+                "standing": 0,
+            }
+            for action in actions:
+                label = str(action.get("label") or "")
+                score = float(action.get("score", 0.0))
+                if label in behavior_counts and score >= self.behavior_threshold:
+                    behavior_counts[label] += 1
+
+            dominant_behavior = "none"
+            if people_estimate > 0:
+                dominant_behavior = max(behavior_counts, key=lambda k: behavior_counts[k])
+                if behavior_counts[dominant_behavior] == 0:
+                    dominant_behavior = "standing"
+
+            behavior_weighted = (
+                behavior_counts["moving"] * 1.0
+                + behavior_counts["hand_raised"] * 0.8
+                + behavior_counts["bending"] * 0.6
+            )
+            agitation_score = self._clip01(behavior_weighted / max(1.0, people_estimate * 1.2))
+            risk_level = self._risk_level(crowd_level, agitation_score)
+
+            now_ts = time.time()
+            if risk_level in {"elevated", "high"} and now_ts - self._last_alert_ts >= self._alert_cooldown_s:
+                self._last_alert_ts = now_ts
+                self.face_db.add_event(
+                    event_type="crowd_behavior_alert",
+                    face_type="crowd",
+                    face_id=None,
+                    name=f"{risk_level}:{dominant_behavior}",
+                    score=agitation_score,
+                    bbox=None,
+                )
+
+            payload = {
+                "ok": True,
+                "pose_enabled": self.pose_service.enabled,
+                "objects": {"total": len(detections), "counts": object_counts},
+                "people": {
+                    "from_detection": people_from_detection,
+                    "from_pose": people_from_pose,
+                    "estimate": people_estimate,
+                },
+                "crowd": {
+                    "level": crowd_level,
+                    "occupancy_ratio": round(occupancy_ratio, 3),
+                    "risk": risk_level,
+                },
+                "behavior": {
+                    "counts": behavior_counts,
+                    "dominant": dominant_behavior,
+                    "agitation_score": round(agitation_score, 3),
+                },
+                "timestamp": now_utc().isoformat(),
+            }
             self._set_last(payload)
