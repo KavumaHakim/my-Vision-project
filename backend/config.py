@@ -18,7 +18,10 @@ class Settings:
     use_gpu: bool
     capture_dir: str
     camera_index: int
+    camera_width: int
+    camera_height: int
     stream_fps: int
+    detector_max_fps: int
     face_db_path: str
     face_model_name: str
     face_match_threshold: float
@@ -80,7 +83,10 @@ def load_settings() -> Settings:
     use_gpu = _get_bool("USE_GPU", False)
     capture_dir = os.getenv("CAPTURE_DIR", "captures").strip()
     camera_index = int(os.getenv("CAMERA_INDEX", "0").strip())
+    camera_width = int(os.getenv("CAMERA_WIDTH", "640").strip())
+    camera_height = int(os.getenv("CAMERA_HEIGHT", "480").strip())
     stream_fps = int(os.getenv("STREAM_FPS", "10").strip())
+    detector_max_fps = int(os.getenv("DETECTOR_MAX_FPS", "5").strip())
     face_db_path = os.getenv("FACE_DB_PATH", "faces.db").strip()
     face_model_name = os.getenv("FACE_MODEL_NAME", "buffalo_l").strip()
     face_match_threshold = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45").strip())
@@ -149,7 +155,10 @@ def load_settings() -> Settings:
         use_gpu=use_gpu,
         capture_dir=capture_dir,
         camera_index=camera_index,
+        camera_width=camera_width,
+        camera_height=camera_height,
         stream_fps=stream_fps,
+        detector_max_fps=detector_max_fps,
         face_db_path=face_db_path,
         face_model_name=face_model_name,
         face_match_threshold=face_match_threshold,

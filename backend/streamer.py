@@ -30,22 +30,41 @@ def _draw_face_label(frame, result) -> None:
         )
 
 
-def mjpeg_generator(detector, fps: int, face_recognition_service=None) -> Generator[bytes, None, None]:
+def mjpeg_generator(detector, camera, fps: int, face_recognition_service=None) -> Generator[bytes, None, None]:
     delay = 1.0 / max(1, fps)
     while True:
-        frame = detector.get_latest_frame(annotated=True)
+        start_time = time.time()
+        # Fetch the latest live frame from the threaded camera
+        frame = camera.read()
         if frame is None:
-            time.sleep(0.05)
+            time.sleep(0.02)
             continue
+        
+        # Overlay the latest detections calculated asynchronously
+        _, detections = detector.get_latest()
+        if detections:
+            run_full_detection = detector.can_run_post_face_pipeline()
+            color = (0, 255, 0) if run_full_detection else (0, 180, 255)
+            detector._draw_detections(frame, detections, color=color)
+
         if face_recognition_service is not None:
             _draw_face_label(frame, face_recognition_service.get_last())
+
         ok, encoded = cv2.imencode(".jpg", frame)
         if not ok:
-            time.sleep(delay)
+            elapsed = time.time() - start_time
+            sleep_time = delay - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
             continue
+
         payload = encoded.tobytes()
         yield (
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n\r\n" + payload + b"\r\n"
         )
-        time.sleep(delay)
+
+        elapsed = time.time() - start_time
+        sleep_time = delay - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)

@@ -26,6 +26,7 @@ class Detector:
         face_after_motion_seconds: float = 10.0,
         fallback_models: list[str] | None = None,
         is_enabled=None,
+        max_fps: int = 5,
     ) -> None:
         model_candidates = self._model_candidates(model_path, fallback_models or [])
         if not model_candidates:
@@ -58,6 +59,10 @@ class Detector:
         self.motion_min_pixels = max(100, int(motion_min_pixels))
         self.face_after_motion_seconds = max(1.0, float(face_after_motion_seconds))
         self._is_enabled = is_enabled if callable(is_enabled) else (lambda: True)
+        self.max_fps = max(1, max_fps)
+
+        self._inference_lock = threading.Lock()
+        self._inference_busy = False
 
         self._lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
@@ -220,6 +225,7 @@ class Detector:
 
     def _loop(self, frame_source) -> None:
         while not self._stop.is_set():
+            start_time = time.time()
             frame = frame_source()
             if frame is None:
                 time.sleep(0.02)
@@ -234,33 +240,71 @@ class Detector:
             elif not motion_detected:
                 self._motion_latched = False
 
-            detections: list[dict[str, Any]] = []
-            person_present = False
+            # Update motion status and latest raw frame immediately at high FPS
+            with self._lock:
+                self._latest_raw = raw
+                self._latest_motion = motion_detected
+                self._ready = True
 
-            if self.model is not None and self._is_enabled() and (motion_detected or now_ts < self._face_after_motion_until):
-                run_full_detection = self.can_run_post_face_pipeline()
-                results = self.model.predict(
-                    source=frame,
-                    verbose=False,
-                    device=self.device,
-                    imgsz=640,
-                    conf=0.25,
-                    classes=None if run_full_detection else [0],
-                )
-                result = results[0] if results else None
-                detections, person_present = self._parse_detections(result)
-                self._draw_detections(
-                    frame,
-                    detections,
-                    color=(0, 255, 0) if run_full_detection else (0, 180, 255),
-                )
+            # Check if we should trigger an asynchronous inference
+            should_predict = (
+                self.model is not None 
+                and self._is_enabled() 
+                and (motion_detected or now_ts < self._face_after_motion_until)
+            )
+
+            if should_predict:
+                with self._inference_lock:
+                    busy = self._inference_busy
+                if not busy:
+                    with self._inference_lock:
+                        self._inference_busy = True
+                    run_full_detection = self.can_run_post_face_pipeline()
+                    # Spawn inference in a background thread to prevent blocking the main loop
+                    threading.Thread(
+                        target=self._run_async_inference,
+                        args=(raw, run_full_detection, now_ts),
+                        daemon=True
+                    ).start()
+            else:
+                # If we are not predicting, let's keep self._latest_frame fresh with the raw image
+                with self._lock:
+                    self._latest_frame = raw
+
+            elapsed = time.time() - start_time
+            sleep_time = (1.0 / self.max_fps) - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    def _run_async_inference(self, frame: np.ndarray, run_full_detection: bool, now_ts: float) -> None:
+        try:
+            results = self.model.predict(
+                source=frame,
+                verbose=False,
+                device=self.device,
+                imgsz=640,
+                conf=0.25,
+                classes=None,
+            )
+            result = results[0] if results else None
+            detections, person_present = self._parse_detections(result)
+
+            # Draw detections on a copy of the frame
+            annotated = frame.copy()
+            self._draw_detections(
+                annotated,
+                detections,
+                color=(0, 255, 0) if run_full_detection else (0, 180, 255),
+            )
 
             ts = now_utc().isoformat()
             with self._lock:
-                self._latest_frame = frame
-                self._latest_raw = raw
+                self._latest_frame = annotated
                 self._latest_detections = detections
                 self._latest_ts = ts
-                self._latest_motion = motion_detected
                 self._latest_person = person_present
-                self._ready = True
+        except Exception as exc:
+            logger.error("Async inference failed: %s", exc)
+        finally:
+            with self._inference_lock:
+                self._inference_busy = False

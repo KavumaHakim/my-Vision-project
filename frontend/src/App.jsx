@@ -5,15 +5,10 @@ import Controls from "./components/Controls.jsx";
 import FacePanel from "./components/FacePanel.jsx";
 import EmotionPanel from "./components/EmotionPanel.jsx";
 import TimelinePanel from "./components/TimelinePanel.jsx";
-import ActionPanel from "./components/ActionPanel.jsx";
-import AudioPanel from "./components/AudioPanel.jsx";
 import ModelDashboard from "./components/ModelDashboard.jsx";
 import CrowdPanel from "./components/CrowdPanel.jsx";
 import CameraSourceDialog from "./components/CameraSourceDialog.jsx";
 import LoginPage from "./components/LoginPage.jsx";
-import DemosPage from "./components/DemosPage.jsx";
-import SecurityDemoPanel from "./components/SecurityDemoPanel.jsx";
-import AttendanceDemoPanel from "./components/AttendanceDemoPanel.jsx";
 import { getHealth } from "./api.js";
 
 const PAGES = [
@@ -30,12 +25,12 @@ const PAGES = [
   {
     id: "identity",
     label: "Identity",
-    blurb: "Face recognition, security alerts, and attendance."
+    blurb: "Face recognition and registration."
   },
   {
     id: "intelligence",
     label: "Intelligence",
-    blurb: "Action, audio, and emotion model outputs."
+    blurb: "Emotion model outputs."
   },
   {
     id: "analytics",
@@ -45,12 +40,7 @@ const PAGES = [
   {
     id: "timeline",
     label: "Timeline",
-    blurb: "Behavior and attendance history."
-  },
-  {
-    id: "demos",
-    label: "Demos",
-    blurb: "Scenario-driven live demonstrations."
+    blurb: "Behavior history."
   }
 ];
 
@@ -78,14 +68,6 @@ function OverviewPage({ health }) {
       <section className="card">
         <h2>Controls</h2>
         <Controls />
-      </section>
-      <section className="card">
-        <h2>Action Snapshot</h2>
-        <ActionPanel />
-      </section>
-      <section className="card">
-        <h2>Audio Snapshot</h2>
-        <AudioPanel />
       </section>
       <section className="card">
         <h2>Crowd Snapshot</h2>
@@ -121,14 +103,6 @@ function IdentityPage() {
         <h2>Face Registration & Recognition</h2>
         <FacePanel />
       </section>
-      <section className="card">
-        <h2>Security Monitor</h2>
-        <SecurityDemoPanel />
-      </section>
-      <section className="card">
-        <h2>Attendance</h2>
-        <AttendanceDemoPanel />
-      </section>
     </div>
   );
 }
@@ -136,14 +110,6 @@ function IdentityPage() {
 function IntelligencePage() {
   return (
     <div className="page-grid">
-      <section className="card">
-        <h2>Action Tracking</h2>
-        <ActionPanel />
-      </section>
-      <section className="card">
-        <h2>Audio Alerts</h2>
-        <AudioPanel />
-      </section>
       <section className="card">
         <h2>Emotion Detection</h2>
         <EmotionPanel />
@@ -163,10 +129,6 @@ function CrowdAnalyticsPage() {
         <h2>Live Detection Feed</h2>
         <DetectionPanel />
       </section>
-      <section className="card">
-        <h2>Pose and Action Snapshot</h2>
-        <ActionPanel />
-      </section>
     </div>
   );
 }
@@ -177,10 +139,6 @@ function TimelinePage() {
       <section className="card">
         <h2>Behavior Timeline</h2>
         <TimelinePanel />
-      </section>
-      <section className="card">
-        <h2>Attendance Summary</h2>
-        <AttendanceDemoPanel />
       </section>
     </div>
   );
@@ -235,7 +193,6 @@ export default function App() {
   if (page === "intelligence") content = <IntelligencePage />;
   if (page === "analytics") content = <CrowdAnalyticsPage />;
   if (page === "timeline") content = <TimelinePage />;
-  if (page === "demos") content = <DemosPage />;
 
   if (!session) {
     return (

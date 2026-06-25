@@ -75,7 +75,11 @@ app.add_middleware(
     allow_headers=["*"] ,
 )
 
-camera = Camera(index=settings.camera_index)
+camera = Camera(
+    index=settings.camera_index,
+    width=settings.camera_width,
+    height=settings.camera_height,
+)
 model_toggles = RuntimeModelToggles()
 
 
@@ -103,6 +107,7 @@ detector = Detector(
     face_after_motion_seconds=settings.face_after_motion_seconds,
     fallback_models=settings.auto_model_candidates,
     is_enabled=_is_enabled("object_detection"),
+    max_fps=settings.detector_max_fps,
 )
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
@@ -188,6 +193,7 @@ crowd_service = BehaviorCrowdService(
 )
 
 audio_alert_service = AudioAlertService(
+    detector=detector,
     face_db=face_db,
     hf_url=settings.hf_audio_url,
     hf_token=settings.hf_token,
@@ -266,7 +272,12 @@ async def video_stream():
     if not camera.is_opened():
         raise HTTPException(status_code=503, detail="camera_unavailable")
     return StreamingResponse(
-        mjpeg_generator(detector, fps=settings.stream_fps, face_recognition_service=face_recognition_service),
+        mjpeg_generator(
+            detector,
+            camera,
+            fps=settings.stream_fps,
+            face_recognition_service=face_recognition_service,
+        ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 

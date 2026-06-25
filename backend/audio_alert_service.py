@@ -14,6 +14,7 @@ import sounddevice as sd
 class AudioAlertService:
     def __init__(
         self,
+        detector,
         face_db,
         hf_url: str | None,
         hf_token: str | None,
@@ -26,6 +27,7 @@ class AudioAlertService:
         local_model: str | None,
         is_enabled=None,
     ) -> None:
+        self.detector = detector
         self.face_db = face_db
         self.hf_url = hf_url
         self.hf_token = hf_token
@@ -132,6 +134,12 @@ class AudioAlertService:
             time.sleep(self.interval_s)
             if not self._is_enabled():
                 continue
+            
+            # Cascade: bypass audio alert recording/inference if there is no motion
+            if self.detector is not None and not self.detector.has_motion():
+                self._set_last({"ok": True, "status": "idle", "reason": "no_motion"})
+                continue
+
             wav_bytes = self._record_wav()
             if not wav_bytes:
                 continue

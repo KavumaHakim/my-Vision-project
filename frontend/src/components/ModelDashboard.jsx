@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  getActionLast,
-  getAudioLast,
   getCrowdLast,
   getDetections,
   getModelToggles,
@@ -19,9 +17,7 @@ const TOGGLE_META = [
   { key: "object_detection", label: "Object Detection" },
   { key: "face_recognition", label: "Face Recognition" },
   { key: "emotion", label: "Emotion" },
-  { key: "action_tracking", label: "Action Tracking" },
   { key: "pose_tracking", label: "Pose Tracking" },
-  { key: "audio_alerts", label: "Audio Alerts" },
   { key: "crowd_analysis", label: "Crowd Analysis" }
 ];
 
@@ -29,8 +25,6 @@ export default function ModelDashboard({ health }) {
   const [snapshot, setSnapshot] = useState({
     detections: null,
     face: null,
-    action: null,
-    audio: null,
     pose: null,
     security: null,
     crowd: null
@@ -49,8 +43,6 @@ export default function ModelDashboard({ health }) {
       const responses = await Promise.allSettled([
         getDetections(),
         faceLast(),
-        getActionLast(),
-        getAudioLast(),
         getPoseLast(),
         getSecurityLast(),
         getCrowdLast(),
@@ -58,11 +50,11 @@ export default function ModelDashboard({ health }) {
       ]);
 
       if (!mounted) return;
-      const [detections, face, action, audio, pose, security, crowd, modelToggles] = responses.map((item) =>
+      const [detections, face, pose, security, crowd, modelToggles] = responses.map((item) =>
         item.status === "fulfilled" ? item.value : null
       );
 
-      setSnapshot({ detections, face, action, audio, pose, security, crowd });
+      setSnapshot({ detections, face, pose, security, crowd });
       if (modelToggles?.toggles) setToggles(modelToggles.toggles);
       const failed = responses.some((item) => item.status === "rejected");
       setError(failed ? "Some model feeds are unavailable." : null);
@@ -97,14 +89,11 @@ export default function ModelDashboard({ health }) {
     const gate = toggles || defaultToggleState;
     const objects = snapshot.detections?.objects || [];
     const faceResult = snapshot.face?.result;
-    const actionResult = snapshot.action?.result;
-    const audioResult = snapshot.audio?.result;
     const poseResult = snapshot.pose?.result;
     const securityResult = snapshot.security?.result;
     const crowdResult = snapshot.crowd?.result;
 
     const unknownAlerts = (securityResult?.unknowns || []).filter((item) => item.alerted).length;
-    const audioAlert = audioResult?.alert;
     const poses = poseResult?.poses || [];
     const poseAction = poseResult?.best_action;
     const faces = faceResult?.faces || [];
@@ -132,15 +121,6 @@ export default function ModelDashboard({ health }) {
           : "No active face session"
       },
       {
-        name: "Action Tracking",
-        active: Boolean(gate.action_tracking && actionResult?.best),
-        detail: !gate.action_tracking
-          ? "Disabled by user toggle"
-          : actionResult?.best
-          ? `${actionResult.best.label} (${actionResult.best.score.toFixed(2)})`
-          : "No high-confidence action"
-      },
-      {
         name: "Pose Tracking",
         active: Boolean(gate.pose_tracking && snapshot.pose?.enabled && (poses.length > 0 || poseAction)),
         detail: !gate.pose_tracking
@@ -152,15 +132,6 @@ export default function ModelDashboard({ health }) {
             : poses.length > 0
             ? `${poses.length} pose(s) tracked`
             : "No pose events"
-      },
-      {
-        name: "Audio Alerts",
-        active: Boolean(gate.audio_alerts && audioAlert),
-        detail: !gate.audio_alerts
-          ? "Disabled by user toggle"
-          : audioAlert
-          ? `${audioAlert.label} (${audioAlert.score.toFixed(2)})`
-          : "No critical audio signal"
       },
       {
         name: "Security Monitor",
