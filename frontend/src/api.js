@@ -77,6 +77,13 @@ export async function getAttendance(limit = 50) {
   return data;
 }
 
+export async function listFaces() {
+  const res = await fetch(`${BASE}/faces`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "faces_failed");
+  return data;
+}
+
 export async function faceRegisterLive(name) {
   const form = new FormData();
   form.append("name", name);
