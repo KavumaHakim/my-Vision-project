@@ -25,7 +25,7 @@ export default function VideoStream() {
           setTimeout(() => setNonce((n) => n + 1), 1000);
         }}
       />
-      <div className="video-status">{status}</div>
+      <div className={`video-status${status === "reconnecting" ? " reconnecting" : ""}`}>{status}</div>
     </div>
   );
 }

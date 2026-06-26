@@ -85,6 +85,7 @@ class Detector:
         self._latest_frame: np.ndarray | None = None
         self._latest_raw: np.ndarray | None = None
         self._latest_detections: list[dict[str, Any]] = []
+        self._latest_poses: list[dict[str, Any]] = []
         self._latest_ts: str | None = None
         self._latest_motion = False
         self._latest_person = False
@@ -175,6 +176,10 @@ class Detector:
         with self._lock:
             return self._latest_motion or time.time() < self._face_after_motion_until
 
+    def get_latest_poses(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._latest_poses)
+
     def get_latest_frame(self, annotated: bool = True):
         with self._lock:
             frame = self._latest_frame if annotated else self._latest_raw
@@ -198,6 +203,36 @@ class Detector:
         )[1]
         changed = int(cv2.countNonZero(thresh))
         return changed >= self.motion_min_pixels
+
+    def _parse_poses(self, result) -> list[dict[str, Any]]:
+        """Extract person bboxes + COCO keypoints from a YOLO pose result."""
+        poses: list[dict[str, Any]] = []
+        if result is None:
+            return poses
+        keypoints_block = getattr(result, "keypoints", None)
+        boxes = result.boxes if result.boxes is not None else []
+        for idx, box in enumerate(boxes):
+            xyxy = box.xyxy[0].cpu().numpy().tolist()
+            x1, y1, x2, y2 = xyxy
+            conf = float(box.conf[0].cpu().item())
+            pose_item: dict[str, Any] = {
+                "confidence": round(conf, 4),
+                "bbox": [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))],
+                "keypoints": [],
+            }
+            if keypoints_block is not None and len(keypoints_block.xy) > idx:
+                xy = keypoints_block.xy[idx].cpu().numpy()
+                kp_conf = None
+                if keypoints_block.conf is not None and len(keypoints_block.conf) > idx:
+                    kp_conf = keypoints_block.conf[idx].cpu().numpy()
+                for j in range(xy.shape[0]):
+                    pose_item["keypoints"].append({
+                        "x": float(xy[j][0]),
+                        "y": float(xy[j][1]),
+                        "confidence": float(kp_conf[j]) if kp_conf is not None else None,
+                    })
+            poses.append(pose_item)
+        return poses
 
     def _parse_detections(self, result) -> tuple[list[dict[str, Any]], bool]:
         detections: list[dict[str, Any]] = []
@@ -286,6 +321,7 @@ class Detector:
             detections: list[dict[str, Any]] = []
             person_present = False
 
+            poses: list[dict[str, Any]] = []
             if motion_detected or now_ts < self._face_after_motion_until:
                 if self.model is not None:
                     run_full_detection = self.can_run_post_face_pipeline()
@@ -299,6 +335,7 @@ class Detector:
                     )
                     result = results[0] if results else None
                     detections, person_present = self._parse_detections(result)
+                    poses = self._parse_poses(result)
                     self._draw_detections(
                         frame,
                         detections,
@@ -313,6 +350,7 @@ class Detector:
                 self._latest_frame = frame
                 self._latest_raw = raw
                 self._latest_detections = detections
+                self._latest_poses = poses
                 self._latest_ts = ts
                 self._latest_motion = motion_detected
                 self._latest_person = person_present

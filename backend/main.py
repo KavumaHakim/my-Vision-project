@@ -122,12 +122,6 @@ face_recognition_service = FaceRecognitionService(
 
 action_service = ActionService(
     detector=detector,
-    interval_s=settings.action_interval,
-    window_s=settings.action_window_s,
-    frames=settings.action_frames,
-    use_gpu=settings.use_gpu,
-    model_path=settings.action_model_path,
-    model_url=settings.action_model_url,
     enabled=settings.enable_action,
 )
 
@@ -187,9 +181,9 @@ async def health() -> JSONResponse:
             "post_face_pipeline": detector.can_run_post_face_pipeline(),
             "face_enabled": face_service.enabled,
             "face_error": face_service.load_error,
-            "pose_enabled": pose_service.enabled,
-            "pose_backend": pose_service.backend,
-            "pose_error": pose_service.load_error,
+            "pose_enabled": detector.is_ready(),
+            "pose_backend": "pose_detector" if detector.is_ready() else (pose_service.backend if pose_service.enabled else "disabled"),
+            "pose_error": None if detector.is_ready() else (pose_service.load_error or detector.get_model_error()),
             "action_backend": action_service.backend,
             "action_enabled": action_service.enabled,
             "action_error": action_service.load_error,

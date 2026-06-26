@@ -47,14 +47,9 @@ const PAGES = [
 ];
 
 function HealthPills({ health }) {
-  return (
-    <div className="workspace-pills">
-      <div className={health.ok ? "pill ok" : "pill"}>{health.ok ? "Backend" : "Backend Down"}</div>
-      <div className={health.camera ? "pill ok" : "pill"}>{health.camera ? "Camera Ready" : "No Camera"}</div>
-      <div className={health.model ? "pill ok" : "pill"}>{health.model ? "Model Loaded" : "Model Offline"}</div>
-      <div className={health.motion ? "pill ok" : "pill"}>{health.motion ? "Motion Active" : "Motion Idle"}</div>
-    </div>
-  );
+  const ok = health.ok && health.camera && health.model;
+  const label = !health.ok ? "Backend offline" : !health.camera ? "No camera" : !health.model ? "Model offline" : "System online";
+  return <div className={ok ? "pill ok" : "pill"}>{label}</div>;
 }
 
 function OverviewPage({ health }) {
@@ -85,8 +80,8 @@ function OverviewPage({ health }) {
 
 function VisionOpsPage() {
   return (
-    <div className="page-grid">
-      <section className="card">
+    <div className="vision-ops-grid">
+      <section className="card vision-stream-card">
         <h2>Live Stream</h2>
         <VideoStream />
       </section>

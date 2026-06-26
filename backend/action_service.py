@@ -2,142 +2,25 @@ from __future__ import annotations
 
 import logging
 import math
-import os
-import time
 from typing import Any
-
-import cv2
-import numpy as np
-import requests
 
 logger = logging.getLogger("vision-v1.action")
 
 
 class ActionService:
-    def __init__(
-        self,
-        detector,
-        interval_s: int,
-        window_s: float,
-        frames: int,
-        use_gpu: bool,
-        model_path: str | None = None,
-        model_url: str | None = None,
-        enabled: bool = True,
-    ) -> None:
+    """
+    Scores actions from pose keypoints already computed by the Detector.
+    No model loading — reads detector.get_latest_poses() each call.
+    """
+
+    def __init__(self, detector, enabled: bool = True) -> None:
         self.detector = detector
-        self.interval_s = max(5, int(interval_s))
-        self.window_s = max(0.5, float(window_s))
-        self.frames = max(8, int(frames))
         self.enabled = bool(enabled)
-        self.device = "cpu"
-        self.action_model_path = (model_path or "").strip() or None
-        self.action_model_url = (model_url or "").strip() or None
-        self.backend = "disabled"
-        self.load_error: str | None = None
-
-        self._pose_model = None
-        self._weights = None
-        self._model = None
-        self._preprocess = None
-        self._categories = None
-        self._torch = None
-
-        if not self.enabled:
-            self.load_error = "disabled_by_config"
-        else:
-            self._init_backend(use_gpu)
-
-        self._stop = False
+        self.backend = "pose_detector" if self.enabled else "disabled"
+        self.load_error: str | None = None if self.enabled else "disabled_by_config"
+        self._prev_center: tuple[float, float] | None = None
         self._last_result: dict[str, Any] | None = None
-
-    def _init_backend(self, use_gpu: bool) -> None:
-        try:
-            import torch
-        except Exception as exc:
-            self.enabled = False
-            self.load_error = f"torch_import_failed: {exc}"
-            logger.warning("Action service disabled: %s", self.load_error)
-            return
-        self._torch = torch
-        self.device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
-
-        if self.action_model_path:
-            try:
-                from ultralytics import YOLO
-                resolved_path = self._resolve_model_path(self.action_model_path, self.action_model_url)
-                self._pose_model = YOLO(resolved_path)
-                self._pose_model.to(str(self.device))
-                self.action_model_path = resolved_path
-                self.backend = "yolo_pose"
-                logger.info("Action backend set to yolo_pose with model: %s", resolved_path)
-                return
-            except Exception as exc:
-                if "Can't get attribute 'Pose26'" in str(exc):
-                    logger.error(
-                        "Action pose model requires newer ultralytics. Upgrade to >=8.4.0 to load yolo26n-pose.pt."
-                    )
-                logger.warning("Failed to initialize YOLO pose action backend: %s. Action detection disabled.", exc)
-                self.backend = "disabled"
-        else:
-            # No model path configured — disable action detection.
-            # R2Plus1D-18 is too heavy (~400 MB, 30-60 s/inference) for a Pi 4 CPU.
-            # Set ACTION_MODEL_PATH in .env to enable the YOLO pose backend.
-            logger.info(
-                "ACTION_MODEL_PATH not set. Action detection disabled. "
-                "Set ACTION_MODEL_PATH to a YOLO pose model to enable it."
-            )
-            self.backend = "disabled"
-
-        try:
-            from torchvision.models.video import R2Plus1D_18_Weights, r2plus1d_18
-            self._weights = R2Plus1D_18_Weights.DEFAULT
-            self._model = r2plus1d_18(weights=self._weights).to(self.device)
-            self._model.eval()
-            self._preprocess = self._weights.transforms()
-            self._categories = self._weights.meta["categories"]
-            self.backend = "r2plus1d"
-        except Exception as exc:
-            self.enabled = False
-            self.backend = "disabled"
-            self.load_error = f"action_backend_init_failed: {exc}"
-            logger.warning("Action service disabled: %s", self.load_error)
-
-    @staticmethod
-    def _is_remote(path: str) -> bool:
-        return path.startswith(("http://", "https://"))
-
-    def _resolve_model_path(self, model_path: str, model_url: str | None) -> str:
-        if self._is_remote(model_path):
-            return model_path
-        local_path = os.path.abspath(model_path)
-        if os.path.exists(local_path):
-            return local_path
-        if not model_url:
-            raise FileNotFoundError(f"Action model missing and ACTION_MODEL_URL is not set: {local_path}")
-        return self._download_model(local_path, model_url)
-
-    @staticmethod
-    def _download_model(target_path: str, model_url: str) -> str:
-        os.makedirs(os.path.dirname(target_path) or ".", exist_ok=True)
-        tmp_path = f"{target_path}.part"
-        logger.info("Downloading action model from %s to %s", model_url, target_path)
-        try:
-            with requests.get(model_url, stream=True, timeout=(15, 120)) as resp:
-                resp.raise_for_status()
-                with open(tmp_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            f.write(chunk)
-            os.replace(tmp_path, target_path)
-        except Exception:
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
-        return target_path
+        self._stop = False
 
     def stop(self) -> None:
         self._stop = True
@@ -145,142 +28,95 @@ class ActionService:
     def get_last(self) -> dict[str, Any] | None:
         return dict(self._last_result) if self._last_result else None
 
-    def _capture_clip(self) -> np.ndarray | None:
-        interval = self.window_s / self.frames
-        frames = []
-        for _ in range(self.frames):
-            frame = self.detector.get_latest_frame(annotated=False)
-            if frame is None:
-                time.sleep(0.02)
-                continue
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(rgb)
-            time.sleep(interval)
-        if len(frames) < max(4, self.frames // 2):
-            return None
-        return np.stack(frames, axis=0)
-
     @staticmethod
-    def _clip01(value: float) -> float:
-        return max(0.0, min(1.0, float(value)))
+    def _clip01(v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
 
-    @staticmethod
-    def _mean_point(points: np.ndarray, indices: list[int]) -> tuple[float, float] | None:
-        valid = [i for i in indices if i < points.shape[0]]
-        if not valid:
+    def _get_kp(
+        self, keypoints: list[dict], idx: int, min_conf: float = 0.2
+    ) -> tuple[float, float] | None:
+        if idx >= len(keypoints):
             return None
-        sub = points[valid]
-        return float(np.mean(sub[:, 0])), float(np.mean(sub[:, 1]))
+        kp = keypoints[idx]
+        if (kp.get("confidence") or 0.0) < min_conf:
+            return None
+        return float(kp.get("x", 0.0)), float(kp.get("y", 0.0))
 
-    def _run_pose_action(self, clip_rgb: np.ndarray) -> dict[str, Any] | None:
-        if self._pose_model is None:
-            return None
-        frames_bgr = [cv2.cvtColor(frame, cv2.COLOR_RGB2BGR) for frame in clip_rgb]
-        results = self._pose_model.predict(
-            source=frames_bgr,
-            verbose=False,
-            device=str(self.device),
-            imgsz=640,
-            conf=0.25,
-        )
-        if not results:
+    def _score_from_poses(self, poses: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not poses:
             return None
 
-        centers: list[tuple[float, float]] = []
-        areas: list[float] = []
-        hand_raise_scores: list[float] = []
-        bend_scores: list[float] = []
+        best_pose = max(poses, key=lambda p: p.get("confidence", 0.0))
+        bbox = best_pose.get("bbox", [])   # [x, y, w, h]
+        keypoints: list[dict] = best_pose.get("keypoints", [])
 
-        for result in results:
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
-                continue
-            idx = int(self._torch.argmax(boxes.conf).item())
-            box = boxes[idx]
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
-            centers.append(((x1 + x2) * 0.5, (y1 + y2) * 0.5))
-            areas.append(max(1.0, (x2 - x1) * (y2 - y1)))
+        # Center and scale from bounding box
+        center: tuple[float, float] | None = None
+        area = 0.0
+        if len(bbox) == 4:
+            x, y, w, h = bbox
+            center = (x + w / 2.0, y + h / 2.0)
+            area = max(1.0, float(w) * float(h))
 
-            kp_block = getattr(result, "keypoints", None)
-            if kp_block is None or len(kp_block.xy) <= idx:
-                hand_raise_scores.append(0.0)
-                bend_scores.append(0.0)
-                continue
-
-            pts = kp_block.xy[idx].cpu().numpy()
-            left_shoulder = self._mean_point(pts, [5])
-            right_shoulder = self._mean_point(pts, [6])
-            left_wrist = self._mean_point(pts, [9])
-            right_wrist = self._mean_point(pts, [10])
-            shoulders = self._mean_point(pts, [5, 6])
-            hips = self._mean_point(pts, [11, 12])
-            knees = self._mean_point(pts, [13, 14])
-
-            raise_score = 0.0
-            if left_wrist and left_shoulder:
-                raise_score = max(raise_score, self._clip01((left_shoulder[1] - left_wrist[1]) / 50.0))
-            if right_wrist and right_shoulder:
-                raise_score = max(raise_score, self._clip01((right_shoulder[1] - right_wrist[1]) / 50.0))
-            hand_raise_scores.append(raise_score)
-
-            if shoulders and hips and knees:
-                torso = abs(hips[1] - shoulders[1]) + 1e-6
-                leg = abs(knees[1] - hips[1]) + 1e-6
-                ratio = torso / leg
-                bend_scores.append(self._clip01((0.85 - ratio) / 0.5))
-            else:
-                bend_scores.append(0.0)
-
-        if not centers:
-            return None
-
+        # Movement — normalized pixel delta between consecutive frames
         movement = 0.0
-        if len(centers) >= 2:
-            dx = centers[-1][0] - centers[0][0]
-            dy = centers[-1][1] - centers[0][1]
-            distance = math.sqrt(dx * dx + dy * dy)
-            scale = math.sqrt(float(np.mean(areas))) + 1e-6
-            movement = self._clip01(distance / (0.45 * scale))
+        if center is not None and self._prev_center is not None:
+            dx = center[0] - self._prev_center[0]
+            dy = center[1] - self._prev_center[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            scale = math.sqrt(area) + 1e-6
+            movement = self._clip01(dist / (0.3 * scale))
+        if center is not None:
+            self._prev_center = center
 
-        hand_raised = float(max(hand_raise_scores) if hand_raise_scores else 0.0)
-        bending = float(max(bend_scores) if bend_scores else 0.0)
+        # COCO keypoint indices used below:
+        # 5=left_shoulder  6=right_shoulder
+        # 9=left_wrist    10=right_wrist
+        # 11=left_hip     12=right_hip
+        # 13=left_knee    14=right_knee
+
+        # Hand raised: wrist above shoulder (lower image-y than shoulder)
+        hand_raised = 0.0
+        ls = self._get_kp(keypoints, 5)
+        rs = self._get_kp(keypoints, 6)
+        lw = self._get_kp(keypoints, 9)
+        rw = self._get_kp(keypoints, 10)
+        if lw and ls:
+            hand_raised = max(hand_raised, self._clip01((ls[1] - lw[1]) / 50.0))
+        if rw and rs:
+            hand_raised = max(hand_raised, self._clip01((rs[1] - rw[1]) / 50.0))
+
+        # Bending: compressed torso vs leg ratio
+        bending = 0.0
+        lh = self._get_kp(keypoints, 11)
+        rh = self._get_kp(keypoints, 12)
+        lk = self._get_kp(keypoints, 13)
+        rk = self._get_kp(keypoints, 14)
+
+        shoulders_y = ((ls[1] + rs[1]) / 2) if (ls and rs) else (ls[1] if ls else (rs[1] if rs else None))
+        hips_y      = ((lh[1] + rh[1]) / 2) if (lh and rh) else (lh[1] if lh else (rh[1] if rh else None))
+        knees_y     = ((lk[1] + rk[1]) / 2) if (lk and rk) else (lk[1] if lk else (rk[1] if rk else None))
+
+        if shoulders_y is not None and hips_y is not None and knees_y is not None:
+            torso = abs(hips_y - shoulders_y) + 1e-6
+            leg   = abs(knees_y - hips_y) + 1e-6
+            bending = self._clip01((0.85 - torso / leg) / 0.5)
+
         standing = self._clip01(1.0 - max(movement, hand_raised, bending))
 
         candidates = [
-            {"label": "moving", "score": movement},
-            {"label": "hand_raised", "score": hand_raised},
-            {"label": "bending", "score": bending},
-            {"label": "standing", "score": standing},
+            {"label": "moving",      "score": round(movement,    3)},
+            {"label": "hand_raised", "score": round(hand_raised, 3)},
+            {"label": "bending",     "score": round(bending,     3)},
+            {"label": "standing",    "score": round(standing,    3)},
         ]
         candidates.sort(key=lambda item: item["score"], reverse=True)
-        topk = candidates[:3]
-        best = topk[0] if topk else None
-        return {"best": best, "topk": topk}
-
-    def _run_video_classifier(self, clip_rgb: np.ndarray) -> dict[str, Any] | None:
-        if self._model is None or self._preprocess is None or self._categories is None:
-            return None
-        torch = self._torch
-        if torch is None:
-            return None
-        video = torch.from_numpy(clip_rgb).permute(0, 3, 1, 2)  # T, C, H, W
-        video = self._preprocess(video).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            logits = self._model(video).squeeze(0)
-            probs = torch.softmax(logits, dim=0)
-        topk = torch.topk(probs, k=3)
-        results = []
-        for score, idx in zip(topk.values.cpu().tolist(), topk.indices.cpu().tolist()):
-            results.append({"label": self._categories[idx], "score": float(score)})
-        best = results[0] if results else None
-        return {"best": best, "topk": results}
+        return {"best": candidates[0], "topk": candidates[:3]}
 
     def run_once(self) -> dict[str, Any] | None:
         if not self.enabled:
             return None
-        clip = self._capture_clip()
-        if clip is None:
+        poses = self.detector.get_latest_poses()
+        if not poses:
             return None
-        if self.backend == "yolo_pose":
-            return self._run_pose_action(clip)
-        return self._run_video_classifier(clip)
+        return self._score_from_poses(poses)

@@ -405,8 +405,6 @@ class PoseTrackingService:
     def start(self) -> None:
         if self._thread is not None:
             return
-        if not self.pose_service.enabled:
-            return
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -430,21 +428,20 @@ class PoseTrackingService:
                 continue
             if not self.detector.has_motion():
                 continue
-            frame = self.detector.get_latest_frame(annotated=False)
-            if frame is None:
+            # Reuse poses already computed by the detector — no second inference pass.
+            poses = [
+                p for p in self.detector.get_latest_poses()
+                if p.get("confidence", 0.0) >= self.threshold
+            ]
+            if not poses:
                 continue
-            result = self.pose_service.run_once(frame, conf_threshold=self.threshold)
-            if not result:
-                continue
-            poses = result.get("poses") or []
-            if poses:
-                self.face_db.add_event(
-                    event_type="pose_detected",
-                    face_type="pose",
-                    face_id=None,
-                    name=f"poses:{len(poses)}",
-                    score=float(poses[0].get("confidence", 0.0)),
-                    bbox=None,
-                )
+            self.face_db.add_event(
+                event_type="pose_detected",
+                face_type="pose",
+                face_id=None,
+                name=f"poses:{len(poses)}",
+                score=float(poses[0].get("confidence", 0.0)),
+                bbox=None,
+            )
             payload = {"ok": True, "poses": poses, "timestamp": now_utc().isoformat()}
             self._set_last(payload)

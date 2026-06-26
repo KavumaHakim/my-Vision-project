@@ -35,10 +35,6 @@ class Settings:
     face_unknown_threshold: float
     hf_token: str | None
     action_interval: int
-    action_window_s: float
-    action_frames: int
-    action_model_path: str | None
-    action_model_url: str | None
     action_conf_threshold: float
     audio_interval: int
     audio_window_s: float
@@ -69,17 +65,19 @@ def _get_bool(name: str, default: bool) -> bool:
 def load_settings() -> Settings:
     machine = platform.machine().lower()
     is_arm = machine.startswith("arm") or machine.startswith("aarch64")
-    heavy_default = not is_arm
-    enable_detector = _get_bool("ENABLE_DETECTOR", heavy_default)
-    enable_face = _get_bool("ENABLE_FACE", heavy_default)
-    enable_action = _get_bool("ENABLE_ACTION", False)
-    enable_pose = _get_bool("ENABLE_POSE", False)
-    enable_audio = _get_bool("ENABLE_AUDIO", False)
-    model_path = os.getenv("MODEL_PATH", "").strip()
-    model_type = os.getenv("MODEL_TYPE", "yolov8").strip()
+    # Pose model is lightweight enough to enable everything on Pi 4 by default.
+    enable_detector = _get_bool("ENABLE_DETECTOR", True)
+    enable_face = _get_bool("ENABLE_FACE", True)
+    enable_action = _get_bool("ENABLE_ACTION", True)
+    enable_pose = _get_bool("ENABLE_POSE", True)
+    enable_audio = _get_bool("ENABLE_AUDIO", not is_arm)
+    model_path = os.getenv("MODEL_PATH", "yolo11n-pose.pt").strip()
+    model_type = os.getenv("MODEL_TYPE", "yolo_pose").strip()
     auto_model_candidates = [
         item.strip()
-        for item in os.getenv("AUTO_MODEL_CANDIDATES", "yolo11n.pt,yolov8n.pt").split(",")
+        for item in os.getenv(
+            "AUTO_MODEL_CANDIDATES", "yolo11n-pose.pt,yolov8n-pose.pt"
+        ).split(",")
         if item.strip()
     ]
     supabase_url = os.getenv("SUPABASE_URL", "").strip() or None
@@ -100,13 +98,6 @@ def load_settings() -> Settings:
     face_unknown_threshold = float(os.getenv("FACE_UNKNOWN_THRESHOLD", "0.5").strip())
     hf_token = os.getenv("HF_TOKEN", "").strip() or None
     action_interval = int(os.getenv("ACTION_INTERVAL", "10").strip())
-    action_window_s = float(os.getenv("ACTION_WINDOW_S", "2.0").strip())
-    action_frames = int(os.getenv("ACTION_FRAMES", "16").strip())
-    action_model_path = os.getenv("ACTION_MODEL_PATH", os.getenv("POSE_MODEL_PATH", "")).strip() or None
-    action_model_url = os.getenv(
-        "ACTION_MODEL_URL",
-        "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt",
-    ).strip() or None
     action_conf_threshold = float(os.getenv("ACTION_CONF_THRESHOLD", "0.5").strip())
     audio_interval = int(os.getenv("AUDIO_INTERVAL", "5").strip())
     audio_window_s = float(os.getenv("AUDIO_WINDOW_S", "2.0").strip())
@@ -166,10 +157,6 @@ def load_settings() -> Settings:
         face_unknown_threshold=face_unknown_threshold,
         hf_token=hf_token,
         action_interval=action_interval,
-        action_window_s=action_window_s,
-        action_frames=action_frames,
-        action_model_path=action_model_path,
-        action_model_url=action_model_url,
         action_conf_threshold=action_conf_threshold,
         audio_interval=audio_interval,
         audio_window_s=audio_window_s,

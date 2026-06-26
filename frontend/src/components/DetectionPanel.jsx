@@ -28,18 +28,21 @@ export default function DetectionPanel() {
 
   return (
     <div>
-      <div className="muted">Last update: {data.timestamp || "-"}</div>
+      <div className="ts-label">Last update: {data.timestamp || "-"}</div>
       {error && <div className="error">{error}</div>}
-      <ul className="list">
-        {data.objects.length === 0 && <li>No objects detected</li>}
-        {data.objects.map((obj, idx) => (
-          <li key={`${obj.label}-${idx}`}>
-            <span className="label">{obj.label}</span>
-            <span className="confidence">{Math.round(obj.confidence * 100)}%</span>
-            <span className="bbox">[{obj.bbox.join(", ")}]</span>
-          </li>
-        ))}
-      </ul>
+      {data.objects.length === 0 ? (
+        <div className="muted">No objects detected</div>
+      ) : (
+        <ul className="detection-list">
+          {data.objects.map((obj, idx) => (
+            <li className="detection-item" key={`${obj.label}-${idx}`}>
+              <span className="detection-label">{obj.label}</span>
+              <span className="detection-conf">{Math.round(obj.confidence * 100)}%</span>
+              <span className="detection-bbox">{obj.bbox.join(", ")}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
