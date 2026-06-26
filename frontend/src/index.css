@@ -836,6 +836,30 @@ a      { color: var(--accent); }
 
 .login-actions { display: grid; gap: 10px; }
 
+.login-bypass-notice {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-bg);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.login-retry {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.login-retry:hover { border-color: var(--accent); color: var(--accent); }
+
 .login-stream {
   background: #07101e;
   border: 1px solid rgba(255,255,255,0.07);

@@ -8,6 +8,8 @@ export default function LoginPage({ onLogin }) {
   const [status, setStatus] = useState("idle");
   const [auto, setAuto] = useState(true);
   const [error, setError] = useState(null);
+  const [faceDisabled, setFaceDisabled] = useState(false);
+  const [manualName, setManualName] = useState("");
 
   const attemptLogin = async () => {
     setStatus("scanning");
@@ -22,18 +24,27 @@ export default function LoginPage({ onLogin }) {
       }
       setStatus("no_match");
     } catch (err) {
+      const msg = err.message || "failed";
+      if (msg === "face_service_disabled") {
+        setFaceDisabled(true);
+        setAuto(false);
+      }
       setStatus("failed");
-      setError(err.message || "failed");
+      setError(msg);
     }
   };
 
   useEffect(() => {
     if (!auto) return;
-    const id = setInterval(() => {
-      attemptLogin();
-    }, 4000);
+    const id = setInterval(attemptLogin, 4000);
     return () => clearInterval(id);
   }, [auto]);
+
+  const handleManualLogin = () => {
+    const name = manualName.trim();
+    if (!name) return;
+    onLogin({ name, score: 1 });
+  };
 
   return (
     <div className="login-shell">
@@ -46,28 +57,59 @@ export default function LoginPage({ onLogin }) {
             You can also toggle auto‑login for continuous scanning.
           </p>
         </div>
-        <div className="login-actions">
-          <button className="primary" onClick={attemptLogin}>
-            Scan Face ID
-          </button>
-          <label className="toggle">
+
+        {faceDisabled ? (
+          <div className="login-actions">
+            <div className="login-bypass-notice">
+              Face service offline — enter your name to continue.
+            </div>
             <input
-              type="checkbox"
-              checked={auto}
-              onChange={(event) => setAuto(event.target.checked)}
+              className="input"
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleManualLogin()}
+              placeholder="Your name"
+              autoFocus
             />
-            Auto‑login every 4s
-          </label>
-          <div className="muted">
-            Status: {status}
-            {error ? ` · ${error}` : ""}
+            <button className="primary" onClick={handleManualLogin} disabled={!manualName.trim()}>
+              Continue
+            </button>
+            <button
+              className="login-retry"
+              onClick={() => {
+                setFaceDisabled(false);
+                setAuto(true);
+                setError(null);
+              }}
+            >
+              Retry Face ID
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="login-actions">
+            <button className="primary" onClick={attemptLogin}>
+              Scan Face ID
+            </button>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={auto}
+                onChange={(e) => setAuto(e.target.checked)}
+              />
+              Auto‑login every 4s
+            </label>
+            <div className="muted">
+              Status: {status}
+              {error ? ` · ${error}` : ""}
+            </div>
+          </div>
+        )}
       </div>
+
       <div className="login-stream">
         <div className="login-stream-head">
           <span>Live Camera</span>
-          <span className="muted">Face ID ready</span>
+          <span className="muted">{faceDisabled ? "Face ID offline" : "Face ID ready"}</span>
         </div>
         <VideoStream />
       </div>

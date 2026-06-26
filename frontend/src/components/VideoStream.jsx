@@ -8,11 +8,17 @@ export default function VideoStream() {
   const src = useMemo(() => `${streamUrl()}?t=${nonce}`, [nonce]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setNonce((n) => n + 1);
-    }, 60000);
-    return () => clearInterval(id);
+    const refresh = setInterval(() => setNonce((n) => n + 1), 60000);
+    return () => clearInterval(refresh);
   }, []);
+
+  useEffect(() => {
+    setStatus("connecting");
+    const timer = setTimeout(() => {
+      setStatus((s) => (s === "connecting" ? "live" : s));
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [src]);
 
   return (
     <div className="video">
@@ -22,7 +28,7 @@ export default function VideoStream() {
         onLoad={() => setStatus("live")}
         onError={() => {
           setStatus("reconnecting");
-          setTimeout(() => setNonce((n) => n + 1), 1000);
+          setTimeout(() => setNonce((n) => n + 1), 2000);
         }}
       />
       <div className={`video-status${status === "reconnecting" ? " reconnecting" : ""}`}>{status}</div>
