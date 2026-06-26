@@ -47,8 +47,12 @@ const PAGES = [
 ];
 
 function HealthPills({ health }) {
-  const ok = health.ok && health.camera && health.model;
-  const label = !health.ok ? "Backend offline" : !health.camera ? "No camera" : !health.model ? "Model offline" : "System online";
+  const ok = health.ok && health.camera_live && health.model;
+  const label = !health.ok ? "Backend offline"
+    : !health.camera ? "No camera"
+    : !health.camera_live ? "Camera: no frames"
+    : !health.model ? "Model offline"
+    : "System online";
   return <div className={ok ? "pill ok" : "pill"}>{label}</div>;
 }
 

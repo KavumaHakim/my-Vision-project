@@ -169,6 +169,7 @@ async def health() -> JSONResponse:
         {
             "ok": True,
             "camera": camera.is_opened(),
+            "camera_live": detector.get_latest_frame(annotated=False) is not None,
             "camera_required": settings.camera_required,
             "model": detector.is_ready(),
             "model_source": detector.get_model_source(),
