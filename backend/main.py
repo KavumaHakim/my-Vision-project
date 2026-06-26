@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import cv2
 import numpy as np
 import requests
@@ -424,3 +427,23 @@ async def audio_last():
 @app.get("/pose/last")
 async def pose_last():
     return JSONResponse({"ok": True, "result": pose_tracking_service.get_last(), "enabled": pose_service.enabled})
+
+
+# ---------------------------------------------------------------------------
+# SPA frontend — must be last so API routes take priority
+# ---------------------------------------------------------------------------
+_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+
+if _DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        return FileResponse(_DIST / "index.html")
+else:
+    import logging as _logging
+    _logging.getLogger("vision-v1").warning(
+        "Frontend dist/ not found at %s — UI will not be served. "
+        "Run `npm run build` in the frontend directory.",
+        _DIST,
+    )
