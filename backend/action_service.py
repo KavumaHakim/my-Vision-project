@@ -9,9 +9,6 @@ from typing import Any
 import cv2
 import numpy as np
 import requests
-import torch
-from torchvision.models.video import R2Plus1D_18_Weights, r2plus1d_18
-from ultralytics import YOLO
 
 logger = logging.getLogger("vision-v1.action")
 
@@ -26,30 +23,55 @@ class ActionService:
         use_gpu: bool,
         model_path: str | None = None,
         model_url: str | None = None,
+        enabled: bool = True,
     ) -> None:
         self.detector = detector
         self.interval_s = max(5, int(interval_s))
         self.window_s = max(0.5, float(window_s))
         self.frames = max(8, int(frames))
-        self.device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
+        self.enabled = bool(enabled)
+        self.device = "cpu"
         self.action_model_path = (model_path or "").strip() or None
         self.action_model_url = (model_url or "").strip() or None
-        self.backend = "r2plus1d"
+        self.backend = "disabled"
+        self.load_error: str | None = None
 
         self._pose_model = None
         self._weights = None
         self._model = None
         self._preprocess = None
         self._categories = None
+        self._torch = None
+
+        if not self.enabled:
+            self.load_error = "disabled_by_config"
+        else:
+            self._init_backend(use_gpu)
+
+        self._stop = False
+        self._last_result: dict[str, Any] | None = None
+
+    def _init_backend(self, use_gpu: bool) -> None:
+        try:
+            import torch
+        except Exception as exc:
+            self.enabled = False
+            self.load_error = f"torch_import_failed: {exc}"
+            logger.warning("Action service disabled: %s", self.load_error)
+            return
+        self._torch = torch
+        self.device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
 
         if self.action_model_path:
             try:
+                from ultralytics import YOLO
                 resolved_path = self._resolve_model_path(self.action_model_path, self.action_model_url)
                 self._pose_model = YOLO(resolved_path)
                 self._pose_model.to(str(self.device))
                 self.action_model_path = resolved_path
                 self.backend = "yolo_pose"
                 logger.info("Action backend set to yolo_pose with model: %s", resolved_path)
+                return
             except Exception as exc:
                 if "Can't get attribute 'Pose26'" in str(exc):
                     logger.error(
@@ -57,15 +79,19 @@ class ActionService:
                     )
                 logger.warning("Failed to initialize YOLO pose action backend: %s. Falling back to r2plus1d.", exc)
 
-        if self.backend == "r2plus1d":
+        try:
+            from torchvision.models.video import R2Plus1D_18_Weights, r2plus1d_18
             self._weights = R2Plus1D_18_Weights.DEFAULT
             self._model = r2plus1d_18(weights=self._weights).to(self.device)
             self._model.eval()
             self._preprocess = self._weights.transforms()
             self._categories = self._weights.meta["categories"]
-
-        self._stop = False
-        self._last_result: dict[str, Any] | None = None
+            self.backend = "r2plus1d"
+        except Exception as exc:
+            self.enabled = False
+            self.backend = "disabled"
+            self.load_error = f"action_backend_init_failed: {exc}"
+            logger.warning("Action service disabled: %s", self.load_error)
 
     @staticmethod
     def _is_remote(path: str) -> bool:
@@ -159,7 +185,7 @@ class ActionService:
             boxes = result.boxes
             if boxes is None or len(boxes) == 0:
                 continue
-            idx = int(torch.argmax(boxes.conf).item())
+            idx = int(self._torch.argmax(boxes.conf).item())
             box = boxes[idx]
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
             centers.append(((x1 + x2) * 0.5, (y1 + y2) * 0.5))
@@ -224,6 +250,9 @@ class ActionService:
     def _run_video_classifier(self, clip_rgb: np.ndarray) -> dict[str, Any] | None:
         if self._model is None or self._preprocess is None or self._categories is None:
             return None
+        torch = self._torch
+        if torch is None:
+            return None
         video = torch.from_numpy(clip_rgb).permute(0, 3, 1, 2)  # T, C, H, W
         video = self._preprocess(video).unsqueeze(0).to(self.device)
         with torch.no_grad():
@@ -237,6 +266,8 @@ class ActionService:
         return {"best": best, "topk": results}
 
     def run_once(self) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
         clip = self._capture_clip()
         if clip is None:
             return None

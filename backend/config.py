@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
@@ -8,6 +9,11 @@ load_dotenv()
 
 @dataclass
 class Settings:
+    enable_detector: bool
+    enable_face: bool
+    enable_action: bool
+    enable_pose: bool
+    enable_audio: bool
     model_path: str
     model_type: str
     auto_model_candidates: list[str]
@@ -18,6 +24,9 @@ class Settings:
     use_gpu: bool
     capture_dir: str
     camera_index: int
+    camera_backend: str | None
+    camera_open_timeout_s: float
+    camera_required: bool
     stream_fps: int
     face_db_path: str
     face_model_name: str
@@ -60,6 +69,14 @@ def _get_bool(name: str, default: bool) -> bool:
 
 
 def load_settings() -> Settings:
+    machine = platform.machine().lower()
+    is_arm = machine.startswith("arm") or machine.startswith("aarch64")
+    heavy_default = not is_arm
+    enable_detector = _get_bool("ENABLE_DETECTOR", heavy_default)
+    enable_face = _get_bool("ENABLE_FACE", heavy_default)
+    enable_action = _get_bool("ENABLE_ACTION", False)
+    enable_pose = _get_bool("ENABLE_POSE", False)
+    enable_audio = _get_bool("ENABLE_AUDIO", False)
     model_path = os.getenv("MODEL_PATH", "").strip()
     model_type = os.getenv("MODEL_TYPE", "yolov8").strip()
     auto_model_candidates = [
@@ -74,6 +91,9 @@ def load_settings() -> Settings:
     use_gpu = _get_bool("USE_GPU", False)
     capture_dir = os.getenv("CAPTURE_DIR", "captures").strip()
     camera_index = int(os.getenv("CAMERA_INDEX", "0").strip())
+    camera_backend = os.getenv("CAMERA_BACKEND", "").strip() or None
+    camera_open_timeout_s = float(os.getenv("CAMERA_OPEN_TIMEOUT_S", "5.0").strip())
+    camera_required = _get_bool("CAMERA_REQUIRED", False)
     stream_fps = int(os.getenv("STREAM_FPS", "10").strip())
     face_db_path = os.getenv("FACE_DB_PATH", "faces.db").strip()
     face_model_name = os.getenv("FACE_MODEL_NAME", "buffalo_l").strip()
@@ -127,6 +147,11 @@ def load_settings() -> Settings:
     pose_conf_threshold = float(os.getenv("POSE_CONF_THRESHOLD", "0.25").strip())
 
     return Settings(
+        enable_detector=enable_detector,
+        enable_face=enable_face,
+        enable_action=enable_action,
+        enable_pose=enable_pose,
+        enable_audio=enable_audio,
         model_path=model_path,
         model_type=model_type,
         auto_model_candidates=auto_model_candidates,
@@ -137,6 +162,9 @@ def load_settings() -> Settings:
         use_gpu=use_gpu,
         capture_dir=capture_dir,
         camera_index=camera_index,
+        camera_backend=camera_backend,
+        camera_open_timeout_s=camera_open_timeout_s,
+        camera_required=camera_required,
         stream_fps=stream_fps,
         face_db_path=face_db_path,
         face_model_name=face_model_name,

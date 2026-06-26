@@ -8,7 +8,6 @@ from typing import Any
 
 import numpy as np
 import requests
-import sounddevice as sd
 
 
 class AudioAlertService:
@@ -24,6 +23,7 @@ class AudioAlertService:
         sample_rate: int,
         device: str | int | None,
         local_model: str | None,
+        enabled: bool = True,
     ) -> None:
         self.face_db = face_db
         self.hf_url = hf_url
@@ -35,6 +35,7 @@ class AudioAlertService:
         self.sample_rate = int(sample_rate)
         self.device = device
         self.local_model = local_model
+        self.enabled = bool(enabled)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -44,6 +45,9 @@ class AudioAlertService:
 
     def start(self) -> None:
         if self._thread is not None:
+            return
+        if not self.enabled:
+            self._set_last({"ok": False, "error": "disabled"})
             return
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -64,6 +68,7 @@ class AudioAlertService:
     def _record_wav(self) -> bytes | None:
         frames = int(self.sample_rate * self.window_s)
         try:
+            import sounddevice as sd
             audio = sd.rec(
                 frames,
                 samplerate=self.sample_rate,

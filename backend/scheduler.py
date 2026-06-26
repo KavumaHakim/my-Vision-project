@@ -108,6 +108,7 @@ class FaceRecognitionService:
         self.interval_s = max(5, int(interval_s))
         self.security_unknown_seconds = max(1, int(security_unknown_seconds))
         self.post_face_window_s = max(1.0, float(post_face_window_s))
+        self.enabled = bool(getattr(self.face_service, "enabled", True))
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -121,6 +122,8 @@ class FaceRecognitionService:
 
     def start(self) -> None:
         if self._thread is not None:
+            return
+        if not self.enabled:
             return
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -433,6 +436,8 @@ class ActionTrackingService:
 
     def start(self) -> None:
         if self._thread is not None:
+            return
+        if not getattr(self.action_service, "enabled", True):
             return
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
