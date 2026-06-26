@@ -132,11 +132,12 @@ class Camera:
     def _open_picamera2(self) -> bool:
         try:
             from picamera2 import Picamera2  # type: ignore
-        except ImportError:
+        except ImportError as exc:
             logger.warning(
-                "Camera %d: picamera2 not installed. "
-                "Run: pip install picamera2",
-                self.index,
+                "Camera %d: picamera2 import failed (%s). "
+                "If inside a venv, recreate it with --system-site-packages: "
+                "python3 -m venv .venv --system-site-packages",
+                self.index, exc,
             )
             return False
 
