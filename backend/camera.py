@@ -185,7 +185,7 @@ class Camera:
             if frame is None:
                 return None
             self._consecutive_failures = 0
-            return frame[:, :, ::-1]  # RGB → BGR for OpenCV/YOLO
+            return frame[:, :, ::-1].copy()  # RGB → BGR, contiguous writable array
         except Exception as exc:
             self._consecutive_failures += 1
             if self._consecutive_failures % _FAIL_LOG_EVERY == 1:
