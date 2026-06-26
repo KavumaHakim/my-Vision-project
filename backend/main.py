@@ -249,7 +249,9 @@ def _best_unknown(embedding: np.ndarray, threshold: float) -> tuple[int | None, 
 
 async def _load_image(source: str, file: UploadFile | None) -> np.ndarray:
     if source == "live":
-        frame = detector.get_latest_frame(annotated=False) or camera.read()
+        frame = detector.get_latest_frame(annotated=False)
+        if frame is None:
+            frame = camera.read()
         if frame is None:
             raise HTTPException(status_code=503, detail="camera_unavailable")
         return frame
