@@ -9,8 +9,6 @@ from typing import Any
 import cv2
 import numpy as np
 
-from ultralytics import YOLO
-
 from utils import now_utc
 
 logger = logging.getLogger("vision-v1.detector")
@@ -25,30 +23,60 @@ class Detector:
         motion_min_pixels: int = 5000,
         face_after_motion_seconds: float = 10.0,
         fallback_models: list[str] | None = None,
+        enable_model: bool = True,
     ) -> None:
-        model_candidates = self._model_candidates(model_path, fallback_models or [])
-        if not model_candidates:
-            raise RuntimeError("No valid model candidates were provided")
-
         self.model = None
+        self._hog = None
         self.model_source = None
-        last_error: Exception | None = None
-        for candidate in model_candidates:
-            try:
-                self.model = YOLO(candidate)
-                self.model_source = candidate
-                logger.info("Loaded detection model: %s", candidate)
-                break
-            except Exception as exc:
-                last_error = exc
-                logger.warning("Failed model candidate '%s': %s", candidate, exc)
+        self.model_error: str | None = None
+        model_candidates = self._model_candidates(model_path, fallback_models or [])
+        if enable_model:
+            if not model_candidates:
+                self.model_error = "No valid model candidates were provided"
+                logger.warning("Detector model unavailable: %s", self.model_error)
+            else:
+                try:
+                    from ultralytics import YOLO
+                except Exception as exc:
+                    self.model_error = f"ultralytics_import_failed: {exc}"
+                    logger.warning("Ultralytics unavailable, attempting OpenCV HOG fallback: %s", self.model_error)
+                else:
+                    last_error: Exception | None = None
+                    for candidate in model_candidates:
+                        try:
+                            self.model = YOLO(candidate)
+                            self.model_source = candidate
+                            logger.info("Loaded detection model: %s", candidate)
+                            break
+                        except Exception as exc:
+                            last_error = exc
+                            logger.warning("Failed model candidate '%s': %s", candidate, exc)
+                    if self.model is None:
+                        joined = ", ".join(model_candidates)
+                        self.model_error = f"failed_to_load_candidates: {joined}"
+                        logger.warning("Detector model unavailable: %s", self.model_error)
+                        if last_error:
+                            logger.debug("Last model load error: %s", last_error)
 
-        if self.model is None:
-            joined = ", ".join(model_candidates)
-            raise RuntimeError(f"Failed to load any detection model candidate: {joined}") from last_error
+            if self.model is None:
+                try:
+                    hog = cv2.HOGDescriptor()
+                    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+                    self._hog = hog
+                    self.model_source = "opencv_hog_default_people_detector"
+                    logger.info("Using OpenCV HOG fallback detector (person-only).")
+                except Exception as exc:
+                    if self.model_error:
+                        self.model_error = f"{self.model_error}; hog_init_failed: {exc}"
+                    else:
+                        self.model_error = f"hog_init_failed: {exc}"
+                    logger.warning("Detector fallback disabled: %s", self.model_error)
+        else:
+            self.model_error = "disabled_by_config"
 
         self.device = "cuda" if use_gpu else "cpu"
-        self.model.to(self.device)
+        if self.model is not None:
+            self.model.to(self.device)
         self.motion_pixel_threshold = max(1, int(motion_pixel_threshold))
         self.motion_min_pixels = max(100, int(motion_min_pixels))
         self.face_after_motion_seconds = max(1.0, float(face_after_motion_seconds))
@@ -110,10 +138,13 @@ class Detector:
             self._thread.join(timeout=2)
 
     def is_ready(self) -> bool:
-        return self._ready
+        return self._ready and (self.model is not None or self._hog is not None)
 
     def get_model_source(self) -> str | None:
         return self.model_source
+
+    def get_model_error(self) -> str | None:
+        return self.model_error
 
     def get_latest(self) -> tuple[str | None, list[dict[str, Any]]]:
         with self._lock:
@@ -212,6 +243,29 @@ class Detector:
                 cv2.LINE_AA,
             )
 
+    def _hog_detections(self, frame: np.ndarray) -> tuple[list[dict[str, Any]], bool]:
+        if self._hog is None:
+            return [], False
+        rects, weights = self._hog.detectMultiScale(
+            frame,
+            winStride=(8, 8),
+            padding=(8, 8),
+            scale=1.05,
+        )
+        detections: list[dict[str, Any]] = []
+        for i, (x, y, w, h) in enumerate(rects):
+            conf = 0.5
+            if len(weights) > i:
+                conf = float(weights[i])
+            detections.append(
+                {
+                    "label": "person",
+                    "confidence": round(max(0.0, min(conf, 1.0)), 4),
+                    "bbox": [int(x), int(y), int(w), int(h)],
+                }
+            )
+        return detections, len(detections) > 0
+
     def _loop(self, frame_source) -> None:
         while not self._stop.is_set():
             frame = frame_source()
@@ -233,22 +287,26 @@ class Detector:
             person_present = False
 
             if motion_detected or now_ts < self._face_after_motion_until:
-                run_full_detection = self.can_run_post_face_pipeline()
-                results = self.model.predict(
-                    source=frame,
-                    verbose=False,
-                    device=self.device,
-                    imgsz=640,
-                    conf=0.25,
-                    classes=None if run_full_detection else [0],
-                )
-                result = results[0] if results else None
-                detections, person_present = self._parse_detections(result)
-                self._draw_detections(
-                    frame,
-                    detections,
-                    color=(0, 255, 0) if run_full_detection else (0, 180, 255),
-                )
+                if self.model is not None:
+                    run_full_detection = self.can_run_post_face_pipeline()
+                    results = self.model.predict(
+                        source=frame,
+                        verbose=False,
+                        device=self.device,
+                        imgsz=640,
+                        conf=0.25,
+                        classes=None if run_full_detection else [0],
+                    )
+                    result = results[0] if results else None
+                    detections, person_present = self._parse_detections(result)
+                    self._draw_detections(
+                        frame,
+                        detections,
+                        color=(0, 255, 0) if run_full_detection else (0, 180, 255),
+                    )
+                elif self._hog is not None:
+                    detections, person_present = self._hog_detections(frame)
+                    self._draw_detections(frame, detections, color=(0, 180, 255))
 
             ts = now_utc().isoformat()
             with self._lock:

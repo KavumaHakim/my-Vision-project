@@ -6,22 +6,22 @@ from typing import Any
 
 import numpy as np
 import requests
-from ultralytics import YOLO
 
 logger = logging.getLogger("vision-v1.pose")
 
 
 class PoseService:
-    def __init__(self, model_path: str | None, model_url: str | None, use_gpu: bool) -> None:
+    def __init__(self, model_path: str | None, model_url: str | None, use_gpu: bool, enabled: bool = True) -> None:
         self.model_path = (model_path or "").strip()
         self.model_url = (model_url or "").strip() or None
-        self.enabled = bool(self.model_path)
+        self.enabled = bool(enabled and self.model_path)
         self.device = "cuda" if use_gpu else "cpu"
         self.backend = "disabled"
         self.load_error: str | None = None
         self._model = None
         if self.enabled:
             try:
+                from ultralytics import YOLO
                 resolved_path = self._resolve_model_path(self.model_path, self.model_url)
                 self._model = YOLO(resolved_path)
                 self._model.to(self.device)

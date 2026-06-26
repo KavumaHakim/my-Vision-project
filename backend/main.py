@@ -28,14 +28,28 @@ setup_logging()
 logger = logging.getLogger("vision-v1")
 
 
+def _camera_backend_value(name: str | None) -> int | None:
+    if not name:
+        return None
+    candidate = name.strip().upper()
+    if not candidate:
+        return None
+    if candidate.startswith("CV2_"):
+        candidate = candidate[4:]
+    if not candidate.startswith("CAP_"):
+        candidate = f"CAP_{candidate}"
+    return getattr(cv2, candidate, None)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dir(settings.capture_dir)
     try:
-        camera.open()
+        camera.open(timeout_s=settings.camera_open_timeout_s)
     except RuntimeError as exc:
-        logger.error("Camera failed to open: %s", exc)
-        raise
+        logger.warning("Camera failed to open: %s", exc)
+        if settings.camera_required:
+            raise
     detector.start(camera.read)
     capture_service.start()
     face_recognition_service.start()
@@ -63,7 +77,10 @@ app.add_middleware(
     allow_headers=["*"] ,
 )
 
-camera = Camera(index=settings.camera_index)
+camera = Camera(
+    index=settings.camera_index,
+    backend=_camera_backend_value(settings.camera_backend),
+)
 
 detector = Detector(
     model_path=settings.model_path,
@@ -72,12 +89,17 @@ detector = Detector(
     motion_min_pixels=settings.motion_min_pixels,
     face_after_motion_seconds=settings.face_after_motion_seconds,
     fallback_models=settings.auto_model_candidates,
+    enable_model=settings.enable_detector,
 )
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
 
 face_db = FaceDB(settings.face_db_path)
-face_service = FaceService(model_name=settings.face_model_name, use_gpu=settings.use_gpu)
+face_service = FaceService(
+    model_name=settings.face_model_name,
+    use_gpu=settings.use_gpu,
+    enabled=settings.enable_face,
+)
 
 capture_service = CaptureService(
     detector=detector,
@@ -106,12 +128,14 @@ action_service = ActionService(
     use_gpu=settings.use_gpu,
     model_path=settings.action_model_path,
     model_url=settings.action_model_url,
+    enabled=settings.enable_action,
 )
 
 pose_service = PoseService(
     model_path=settings.pose_model_path,
     model_url=settings.pose_model_url,
     use_gpu=settings.use_gpu,
+    enabled=settings.enable_pose,
 )
 
 action_tracking_service = ActionTrackingService(
@@ -141,6 +165,7 @@ audio_alert_service = AudioAlertService(
     sample_rate=settings.audio_sample_rate,
     device=settings.audio_device,
     local_model=settings.audio_local_model,
+    enabled=settings.enable_audio,
 )
 
 
@@ -150,17 +175,25 @@ async def health() -> JSONResponse:
         {
             "ok": True,
             "camera": camera.is_opened(),
+            "camera_required": settings.camera_required,
             "model": detector.is_ready(),
             "model_source": detector.get_model_source(),
+            "model_error": detector.get_model_error(),
+            "detector_enabled": settings.enable_detector,
             "uploader": uploader.enabled,
             "motion": detector.has_motion(),
             "person": detector.has_person(),
             "face_window": detector.can_run_face_pipeline(),
             "post_face_pipeline": detector.can_run_post_face_pipeline(),
+            "face_enabled": face_service.enabled,
+            "face_error": face_service.load_error,
             "pose_enabled": pose_service.enabled,
             "pose_backend": pose_service.backend,
             "pose_error": pose_service.load_error,
             "action_backend": action_service.backend,
+            "action_enabled": action_service.enabled,
+            "action_error": action_service.load_error,
+            "audio_enabled": audio_alert_service.enabled,
         }
     )
 
@@ -221,7 +254,7 @@ def _best_unknown(embedding: np.ndarray, threshold: float) -> tuple[int | None, 
 
 async def _load_image(source: str, file: UploadFile | None) -> np.ndarray:
     if source == "live":
-        frame = camera.read()
+        frame = detector.get_latest_frame(annotated=False) or camera.read()
         if frame is None:
             raise HTTPException(status_code=503, detail="camera_unavailable")
         return frame
@@ -252,6 +285,8 @@ async def face_register(
     source: str = Form("upload"),
     file: UploadFile | None = File(None),
 ):
+    if not face_service.enabled:
+        raise HTTPException(status_code=503, detail="face_service_disabled")
     if source not in {"upload", "live"}:
         raise HTTPException(status_code=400, detail="invalid_source")
     img = await _load_image(source, file)
@@ -267,6 +302,8 @@ async def face_recognize(
     source: str = Form("upload"),
     file: UploadFile | None = File(None),
 ):
+    if not face_service.enabled:
+        raise HTTPException(status_code=503, detail="face_service_disabled")
     if source not in {"upload", "live"}:
         raise HTTPException(status_code=400, detail="invalid_source")
     img = await _load_image(source, file)
