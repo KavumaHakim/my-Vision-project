@@ -106,10 +106,26 @@ class FaceDB:
             name = id_to_name.get(face_id, "unknown")
             yield face_id, name, emb
 
+    _MAX_SAMPLES_PER_FACE = 10
+
     def add_face_sample(self, face_id: int, embedding: np.ndarray) -> int:
         emb = np.asarray(embedding, dtype=np.float32)
         payload = emb.tobytes()
         with self._lock, self._conn:
+            # Prune oldest samples when at the cap so the table stays bounded.
+            cur_count = self._conn.execute(
+                "SELECT COUNT(*) FROM face_samples WHERE face_id = ?", (face_id,)
+            ).fetchone()[0]
+            if cur_count >= self._MAX_SAMPLES_PER_FACE:
+                self._conn.execute(
+                    """
+                    DELETE FROM face_samples WHERE id IN (
+                        SELECT id FROM face_samples WHERE face_id = ?
+                        ORDER BY id ASC LIMIT ?
+                    )
+                    """,
+                    (face_id, cur_count - self._MAX_SAMPLES_PER_FACE + 1),
+                )
             cur = self._conn.execute(
                 "INSERT INTO face_samples (face_id, embedding, dim, created_at) VALUES (?, ?, ?, ?)",
                 (face_id, payload, emb.size, datetime.utcnow().isoformat()),

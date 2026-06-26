@@ -307,7 +307,8 @@ class FaceRecognitionService:
             stale = set(self._unknown_seen) - set(current_unknown_map)
             for unknown_id in stale:
                 self._unknown_seen.pop(unknown_id, None)
-                self._unknown_alerted.discard(unknown_id)
+                # Keep unknown_id in _unknown_alerted so re-appearance doesn't
+                # fire a second alert for the same person in the same session.
 
             self._set_last(
                 {
@@ -324,98 +325,6 @@ class FaceRecognitionService:
                     "threshold_s": self.security_unknown_seconds,
                     "timestamp": now_utc().isoformat(),
                 }
-
-
-class EmotionService:
-    def __init__(
-        self,
-        detector,
-        hf_url: str,
-        hf_token: str | None,
-        interval_s: int,
-        threshold: float,
-    ) -> None:
-        self.detector = detector
-        self.hf_url = hf_url
-        self.hf_token = hf_token
-        self.interval_s = max(5, int(interval_s))
-        self.threshold = float(threshold)
-
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-        self._last_result: dict[str, Any] | None = None
-
-    def start(self) -> None:
-        if self._thread is not None:
-            return
-        if not self.hf_token:
-            return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
-
-    def get_last(self) -> dict[str, Any] | None:
-        with self._lock:
-            return dict(self._last_result) if self._last_result else None
-
-    def _set_last(self, payload: dict[str, Any]) -> None:
-        with self._lock:
-            self._last_result = payload
-
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            time.sleep(self.interval_s)
-            if not self.detector.has_label("person"):
-                continue
-            frame = self.detector.get_latest_frame(annotated=False)
-            if frame is None:
-                continue
-            ok, encoded = cv2.imencode(".jpg", frame)
-            if not ok:
-                continue
-            headers = {
-                "Authorization": f"Bearer {self.hf_token}",
-                "Content-Type": "image/jpeg",
-            }
-            try:
-                resp = requests.post(
-                    self.hf_url,
-                    headers=headers,
-                    data=encoded.tobytes(),
-                    timeout=30,
-                )
-                payload = resp.json()
-            except Exception:
-                self._set_last(
-                    {"ok": False, "error": "hf_request_failed", "timestamp": now_utc().isoformat()}
-                )
-                continue
-
-            if resp.status_code >= 400:
-                self._set_last(
-                    {
-                        "ok": False,
-                        "error": payload,
-                        "timestamp": now_utc().isoformat(),
-                    }
-                )
-                continue
-
-            filtered = []
-            if isinstance(payload, list):
-                filtered = [
-                    item
-                    for item in payload
-                    if float(item.get("score", 0.0)) >= self.threshold
-                ]
-            self._set_last(
-                {"ok": True, "result": filtered, "timestamp": now_utc().isoformat()}
-            )
 
 
 class ActionTrackingService:

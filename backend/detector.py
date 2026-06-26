@@ -223,7 +223,8 @@ class Detector:
             motion_detected = self._is_motion_detected(raw)
             now_ts = time.time()
             if motion_detected and not self._motion_latched:
-                self._face_after_motion_until = now_ts + self.face_after_motion_seconds
+                with self._lock:
+                    self._face_after_motion_until = now_ts + self.face_after_motion_seconds
                 self._motion_latched = True
             elif not motion_detected:
                 self._motion_latched = False

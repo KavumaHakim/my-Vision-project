@@ -61,7 +61,8 @@ class AudioAlertService:
         with self._lock:
             self._last_result = payload
 
-    def _record_wav(self) -> bytes | None:
+    def _record_audio(self) -> tuple[bytes, np.ndarray] | None:
+        """Returns (wav_bytes for HF API, float32 array for local pipeline)."""
         frames = int(self.sample_rate * self.window_s)
         try:
             audio = sd.rec(
@@ -74,14 +75,15 @@ class AudioAlertService:
             sd.wait()
         except Exception:
             return None
-        pcm = np.clip(audio.squeeze() * 32767.0, -32768, 32767).astype(np.int16)
+        audio_array = audio.squeeze()
+        pcm = np.clip(audio_array * 32767.0, -32768, 32767).astype(np.int16)
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(self.sample_rate)
             wf.writeframes(pcm.tobytes())
-        return buf.getvalue()
+        return buf.getvalue(), audio_array
 
     def _call_hf(self, wav_bytes: bytes) -> list[dict[str, Any]] | None:
         if not self.hf_url or not self.hf_token:
@@ -101,7 +103,7 @@ class AudioAlertService:
             return data
         return None
 
-    def _call_local(self, wav_bytes: bytes) -> list[dict[str, Any]] | None:
+    def _call_local(self, audio_array: np.ndarray) -> list[dict[str, Any]] | None:
         if not self.local_model:
             return None
         if self._local_pipeline is None:
@@ -111,7 +113,8 @@ class AudioAlertService:
                 return None
             self._local_pipeline = pipeline("audio-classification", model=self.local_model)
         try:
-            return self._local_pipeline(wav_bytes, top_k=5)
+            inp = {"array": audio_array, "sampling_rate": self.sample_rate}
+            return self._local_pipeline(inp, top_k=5)
         except Exception:
             return None
 
@@ -128,10 +131,11 @@ class AudioAlertService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
-            wav_bytes = self._record_wav()
-            if not wav_bytes:
+            recorded = self._record_audio()
+            if not recorded:
                 continue
-            results = self._call_hf(wav_bytes) or self._call_local(wav_bytes)
+            wav_bytes, audio_array = recorded
+            results = self._call_hf(wav_bytes) or self._call_local(audio_array)
             if not results:
                 self._set_last({"ok": False, "error": "no_results"})
                 continue

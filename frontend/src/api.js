@@ -30,25 +30,6 @@ export async function faceLast() {
   return data;
 }
 
-export async function emotionLive() {
-  const form = new FormData();
-  form.append("source", "live");
-  const res = await fetch(`${BASE}/emotion`, { method: "POST", body: form });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "emotion_failed");
-  return data;
-}
-
-export async function emotionUpload(file) {
-  const form = new FormData();
-  form.append("source", "upload");
-  form.append("file", file);
-  const res = await fetch(`${BASE}/emotion`, { method: "POST", body: form });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "emotion_failed");
-  return data;
-}
-
 export async function getTimeline(limit = 100) {
   const res = await fetch(`${BASE}/timeline?limit=${limit}`);
   const data = await res.json();

@@ -55,7 +55,17 @@ class ActionService:
                     logger.error(
                         "Action pose model requires newer ultralytics. Upgrade to >=8.4.0 to load yolo26n-pose.pt."
                     )
-                logger.warning("Failed to initialize YOLO pose action backend: %s. Falling back to r2plus1d.", exc)
+                logger.warning("Failed to initialize YOLO pose action backend: %s. Action detection disabled.", exc)
+                self.backend = "disabled"
+        else:
+            # No model path configured — disable action detection.
+            # R2Plus1D-18 is too heavy (~400 MB, 30-60 s/inference) for a Pi 4 CPU.
+            # Set ACTION_MODEL_PATH in .env to enable the YOLO pose backend.
+            logger.info(
+                "ACTION_MODEL_PATH not set. Action detection disabled. "
+                "Set ACTION_MODEL_PATH to a YOLO pose model to enable it."
+            )
+            self.backend = "disabled"
 
         if self.backend == "r2plus1d":
             self._weights = R2Plus1D_18_Weights.DEFAULT

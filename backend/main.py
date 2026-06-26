@@ -17,7 +17,7 @@ from face_service import FaceService
 from pose_service import PoseService
 from action_service import ActionService
 from audio_alert_service import AudioAlertService
-from scheduler import CaptureService, FaceRecognitionService, EmotionService, ActionTrackingService, PoseTrackingService
+from scheduler import CaptureService, FaceRecognitionService, ActionTrackingService, PoseTrackingService
 from streamer import mjpeg_generator
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
@@ -39,7 +39,6 @@ async def lifespan(app: FastAPI):
     detector.start(camera.read)
     capture_service.start()
     face_recognition_service.start()
-    emotion_service.start()
     action_tracking_service.start()
     pose_tracking_service.start()
     audio_alert_service.start()
@@ -49,7 +48,6 @@ async def lifespan(app: FastAPI):
         audio_alert_service.stop()
         pose_tracking_service.stop()
         action_tracking_service.stop()
-        emotion_service.stop()
         face_recognition_service.stop()
         capture_service.stop()
         detector.stop()
@@ -98,14 +96,6 @@ face_recognition_service = FaceRecognitionService(
     interval_s=settings.face_recognition_interval,
     security_unknown_seconds=settings.security_unknown_seconds,
     post_face_window_s=settings.post_face_window_s,
-)
-
-emotion_service = EmotionService(
-    detector=detector,
-    hf_url=settings.hf_emotion_url,
-    hf_token=settings.hf_token,
-    interval_s=settings.face_recognition_interval,
-    threshold=settings.emotion_conf_threshold,
 )
 
 action_service = ActionService(
@@ -385,57 +375,6 @@ async def attendance(limit: int = 50):
     limit = max(1, min(int(limit), 200))
     return JSONResponse({"ok": True, "records": face_db.list_attendance(limit=limit)})
 
-
-@app.post("/emotion")
-async def emotion_detect(
-    source: str = Form("upload"),
-    file: UploadFile | None = File(None),
-):
-    if not settings.hf_token:
-        raise HTTPException(status_code=500, detail="hf_token_missing")
-    if source not in {"upload", "live"}:
-        raise HTTPException(status_code=400, detail="invalid_source")
-
-    if source == "live":
-        frame = camera.read()
-        if frame is None:
-            raise HTTPException(status_code=503, detail="camera_unavailable")
-        data = _encode_jpeg(frame)
-    else:
-        if file is None:
-            raise HTTPException(status_code=400, detail="image_required")
-        data = await file.read()
-        if not data:
-            raise HTTPException(status_code=400, detail="invalid_image")
-
-    headers = {
-        "Authorization": f"Bearer {settings.hf_token}",
-        "Content-Type": "image/jpeg",
-    }
-    try:
-        resp = requests.post(
-            settings.hf_emotion_url,
-            headers=headers,
-            data=data,
-            timeout=30,
-        )
-    except requests.RequestException:
-        raise HTTPException(status_code=502, detail="hf_request_failed")
-
-    try:
-        payload = resp.json()
-    except ValueError:
-        raise HTTPException(status_code=502, detail="hf_invalid_response")
-
-    if resp.status_code >= 400:
-        logger.warning("HF emotion error %s: %s", resp.status_code, payload)
-        return JSONResponse({"ok": False, "error": payload}, status_code=resp.status_code)
-    return JSONResponse({"ok": True, "result": payload})
-
-
-@app.get("/emotion/last")
-async def emotion_last():
-    return JSONResponse({"ok": True, "result": emotion_service.get_last()})
 
 
 @app.get("/action/last")

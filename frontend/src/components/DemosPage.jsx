@@ -17,8 +17,8 @@ const DEMOS = [
   {
     title: "Retail Intelligence",
     body:
-      "Understand dwell time, customer journeys, and emotional response.",
-    tags: ["Emotion", "Behavior", "Insights"]
+      "Understand dwell time, customer journeys, and behavior patterns.",
+    tags: ["Behavior", "Action", "Insights"]
   },
   {
     title: "Healthcare Monitoring",
@@ -49,7 +49,7 @@ export default function DemosPage() {
         <p>
           Use Vision V1 across security, attendance, retail, healthcare, and
           industrial safety. Each scenario connects face ID, behavior, action,
-          emotion, and audio alerts into a single response flow.
+          action, and audio alerts into a single response flow.
         </p>
       </div>
       <section className="demo-live card">

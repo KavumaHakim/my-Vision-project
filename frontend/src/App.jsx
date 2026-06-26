@@ -3,7 +3,6 @@ import VideoStream from "./components/VideoStream.jsx";
 import DetectionPanel from "./components/DetectionPanel.jsx";
 import Controls from "./components/Controls.jsx";
 import FacePanel from "./components/FacePanel.jsx";
-import EmotionPanel from "./components/EmotionPanel.jsx";
 import TimelinePanel from "./components/TimelinePanel.jsx";
 import ActionPanel from "./components/ActionPanel.jsx";
 import AudioPanel from "./components/AudioPanel.jsx";
@@ -33,7 +32,7 @@ const PAGES = [
   {
     id: "intelligence",
     label: "Intelligence",
-    blurb: "Action, audio, and emotion model outputs."
+    blurb: "Action and audio model outputs."
   },
   {
     id: "timeline",
@@ -132,10 +131,6 @@ function IntelligencePage() {
       <section className="card">
         <h2>Audio Alerts</h2>
         <AudioPanel />
-      </section>
-      <section className="card">
-        <h2>Emotion Detection</h2>
-        <EmotionPanel />
       </section>
     </div>
   );
