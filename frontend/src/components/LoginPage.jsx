@@ -25,7 +25,7 @@ export default function LoginPage({ onLogin }) {
       setStatus("no_match");
     } catch (err) {
       const msg = err.message || "failed";
-      if (msg === "face_service_disabled") {
+      if (msg === "face_service_disabled" || msg === "camera_unavailable") {
         setFaceDisabled(true);
         setAuto(false);
       }
@@ -61,7 +61,9 @@ export default function LoginPage({ onLogin }) {
         {faceDisabled ? (
           <div className="login-actions">
             <div className="login-bypass-notice">
-              Face service offline — enter your name to continue.
+              {error === "camera_unavailable"
+                ? "Camera not ready — enter your name to continue."
+                : "Face service offline — enter your name to continue."}
             </div>
             <input
               className="input"
