@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -11,6 +12,8 @@ import requests
 
 from uploader import build_storage_path
 from utils import dated_path, ensure_dir, now_utc, timestamp_str
+
+logger = logging.getLogger(__name__)
 
 
 class CaptureService:
@@ -84,8 +87,13 @@ class CaptureService:
     def _loop(self) -> None:
         while not self._stop.is_set():
             time.sleep(self.interval_s)
-            if self.detector.has_label("person"):
-                self.request_capture(reason="auto")
+            try:
+                if self.detector.has_label("person"):
+                    self.request_capture(reason="auto")
+            except Exception:
+                # Never let a transient capture/upload error kill the thread —
+                # that would silently stop all future auto-captures.
+                logger.exception("Auto-capture iteration failed; continuing.")
 
 
 class FaceRecognitionService:
