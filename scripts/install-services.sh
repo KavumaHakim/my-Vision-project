@@ -68,7 +68,7 @@ if [ -f "$TUNNEL_CONFIG" ]; then
   TUNNEL_EXECSTART="$CLOUDFLARED tunnel --config $TUNNEL_CONFIG run"
   echo "  tunnel:      named (config $TUNNEL_CONFIG)"
 else
-  TUNNEL_EXECSTART="$CLOUDFLARED tunnel --url http://localhost:8000"
+  TUNNEL_EXECSTART="$CLOUDFLARED tunnel --url http://127.0.0.1:8000"
   echo "  tunnel:      quick (random trycloudflare.com URL)"
 fi
 
