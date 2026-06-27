@@ -1,13 +1,35 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Generator
 
 import cv2
 
 
-def _draw_face_label(frame, result) -> None:
+def _result_age_s(result) -> float | None:
+    """Seconds since the recognition result was produced, or None if unknown."""
+    ts = result.get("timestamp")
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
+
+
+def _draw_face_label(frame, result, max_age_s: float) -> None:
     if not result or not result.get("ok"):
+        return
+    # Drop the overlay once the result goes stale. The recognition loop only
+    # refreshes the timestamp while a subject is present, so after they leave
+    # the box ages out instead of lingering — but it stays visible between
+    # recognition cycles (and through brief stillness) while they're here.
+    age = _result_age_s(result)
+    if age is not None and age > max_age_s:
         return
     faces = result.get("faces") or []
     for face in faces:
@@ -32,16 +54,19 @@ def _draw_face_label(frame, result) -> None:
 
 def mjpeg_generator(detector, fps: int, face_recognition_service=None) -> Generator[bytes, None, None]:
     delay = 1.0 / max(1, fps)
+    # Keep the face box through the gap between recognition cycles, then clear
+    # it shortly after the subject leaves. TTL = one recognition interval plus a
+    # margin so it never flickers off right before the next cycle.
+    overlay_ttl = 15.0
+    if face_recognition_service is not None:
+        overlay_ttl = float(getattr(face_recognition_service, "interval_s", 10)) + 5.0
     while True:
         frame = detector.get_latest_frame(annotated=True)
         if frame is None:
             time.sleep(0.05)
             continue
-        # Only overlay the face box while a person is actually in frame.
-        # The recognition result refreshes every interval_s and is never cleared
-        # on its own, so without this gate the box lingers after the face leaves.
-        if face_recognition_service is not None and detector.has_person():
-            _draw_face_label(frame, face_recognition_service.get_last())
+        if face_recognition_service is not None:
+            _draw_face_label(frame, face_recognition_service.get_last(), overlay_ttl)
         ok, encoded = cv2.imencode(".jpg", frame)
         if not ok:
             time.sleep(delay)
