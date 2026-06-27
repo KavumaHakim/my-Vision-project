@@ -59,10 +59,18 @@ EOF
 # ---------------------------------------------------------------------------
 # 2. Cloudflare tunnel service
 # ---------------------------------------------------------------------------
-# If you have a named tunnel set up, replace the ExecStart line with:
-#   ExecStart=$CLOUDFLARED tunnel run vision-v1
-# A named tunnel keeps the same URL across reboots (recommended for production).
-# Quick tunnel (below) gives a new random URL each restart — fine for demos.
+# Auto-detect tunnel mode:
+#   - If ~/.cloudflared/config.yml exists (named tunnel set up), use it ->
+#     stable custom-domain URL that survives reboots.
+#   - Otherwise fall back to a quick tunnel -> random trycloudflare.com URL.
+TUNNEL_CONFIG="$HOME/.cloudflared/config.yml"
+if [ -f "$TUNNEL_CONFIG" ]; then
+  TUNNEL_EXECSTART="$CLOUDFLARED tunnel --config $TUNNEL_CONFIG run"
+  echo "  tunnel:      named (config $TUNNEL_CONFIG)"
+else
+  TUNNEL_EXECSTART="$CLOUDFLARED tunnel --url http://localhost:8000"
+  echo "  tunnel:      quick (random trycloudflare.com URL)"
+fi
 
 sudo tee /etc/systemd/system/vision-tunnel.service > /dev/null << EOF
 [Unit]
@@ -73,7 +81,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$RUN_USER
-ExecStart=$CLOUDFLARED tunnel --url http://localhost:8000
+ExecStart=$TUNNEL_EXECSTART
 Restart=always
 RestartSec=10
 StandardOutput=journal
