@@ -24,7 +24,10 @@ class PoseService:
                 from ultralytics import YOLO
                 resolved_path = self._resolve_model_path(self.model_path, self.model_url)
                 self._model = YOLO(resolved_path)
-                self._model.to(self.device)
+                # Exported formats (ONNX/NCNN/TensorRT) reject .to(); only .pt
+                # PyTorch models support device moves.
+                if resolved_path.endswith(".pt"):
+                    self._model.to(self.device)
                 self.model_path = resolved_path
                 self.backend = "yolo_pose"
             except Exception as exc:

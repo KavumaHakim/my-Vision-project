@@ -76,7 +76,11 @@ class Detector:
 
         self.device = "cuda" if use_gpu else "cpu"
         if self.model is not None:
-            self.model.to(self.device)
+            # Only PyTorch (.pt) models support .to(); exported formats
+            # (ONNX/NCNN/TensorRT) are CPU-resident and ultralytics raises
+            # TypeError if you try to move them.
+            if str(self.model_source or "").endswith(".pt"):
+                self.model.to(self.device)
         self.motion_pixel_threshold = max(1, int(motion_pixel_threshold))
         self.motion_min_pixels = max(100, int(motion_min_pixels))
         self.face_after_motion_seconds = max(1.0, float(face_after_motion_seconds))
