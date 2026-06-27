@@ -23,6 +23,40 @@ export function streamUrl() {
   return `${BASE}/video-stream`;
 }
 
+export function rawStreamUrl(overlay = false) {
+  return `${BASE}/raw-stream${overlay ? "?overlay=1" : ""}`;
+}
+
+export async function setViewMode(mode) {
+  const res = await fetch(`${BASE}/view-mode?mode=${encodeURIComponent(mode)}`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "view_mode_failed");
+  return data;
+}
+
+export async function recordingStart() {
+  const res = await fetch(`${BASE}/recording/start`, { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "recording_start_failed");
+  return data;
+}
+
+export async function recordingStop() {
+  const res = await fetch(`${BASE}/recording/stop`, { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "recording_stop_failed");
+  return data;
+}
+
+export async function recordingStatus() {
+  const res = await fetch(`${BASE}/recording/status`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "recording_status_failed");
+  return data;
+}
+
 export async function faceLast() {
   const res = await fetch(`${BASE}/face/last`);
   const data = await res.json();

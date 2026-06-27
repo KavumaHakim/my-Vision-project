@@ -155,6 +155,16 @@ class Detector:
         with self._lock:
             return self._latest_ts, list(self._latest_detections)
 
+    def draw_latest_overlays(self, frame: np.ndarray) -> None:
+        """Draw the most recent detection boxes onto an arbitrary frame.
+
+        Used by the smooth stream to overlay boxes from the last inference onto
+        fresh raw frames (smooth motion + boxes, boxes lag slightly)."""
+        with self._lock:
+            detections = list(self._latest_detections)
+        if detections:
+            self._draw_detections(frame, detections)
+
     def has_label(self, label: str) -> bool:
         with self._lock:
             return any(det.get("label") == label for det in self._latest_detections)

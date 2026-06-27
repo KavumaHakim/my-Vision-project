@@ -52,6 +52,56 @@ def _draw_face_label(frame, result, max_age_s: float) -> None:
         )
 
 
+def unified_stream(
+    detector,
+    camera_streamer,
+    face_recognition_service,
+    mode_getter,
+    inference_fps: int = 10,
+    smooth_fps: int = 25,
+) -> Generator[bytes, None, None]:
+    """One persistent MJPEG stream whose content follows ``mode_getter()``.
+
+    Switching modes server-side means the client never reconnects (no
+    "reconnecting" flash). Modes:
+      - "inference"  : the annotated inference frame (boxes synced, ~choppy)
+      - "smooth"     : raw ~smooth_fps frame + latest boxes/face overlaid
+      - "smooth_raw" : raw ~smooth_fps frame, no overlays
+    """
+    overlay_ttl = float(getattr(face_recognition_service, "interval_s", 10)) + 5.0
+
+    while True:
+        mode = mode_getter()
+        if mode == "inference":
+            frame = detector.get_latest_frame(annotated=True)
+            delay = 1.0 / max(1, inference_fps)
+            draw_boxes = False  # the annotated frame already has them
+            draw_face = True
+        else:
+            frame = camera_streamer.read_latest()
+            delay = 1.0 / max(1, smooth_fps)
+            draw_boxes = mode == "smooth"
+            draw_face = mode == "smooth"
+
+        if frame is None:
+            time.sleep(0.05)
+            continue
+        if draw_boxes:
+            detector.draw_latest_overlays(frame)
+        if draw_face and face_recognition_service is not None:
+            _draw_face_label(frame, face_recognition_service.get_last(), overlay_ttl)
+
+        ok, encoded = cv2.imencode(".jpg", frame)
+        if not ok:
+            time.sleep(delay)
+            continue
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + encoded.tobytes() + b"\r\n"
+        )
+        time.sleep(delay)
+
+
 def mjpeg_generator(detector, fps: int, face_recognition_service=None) -> Generator[bytes, None, None]:
     delay = 1.0 / max(1, fps)
     # Keep the face box through the gap between recognition cycles, then clear

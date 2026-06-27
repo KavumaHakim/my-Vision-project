@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,7 +22,8 @@ from pose_service import PoseService
 from action_service import ActionService
 from audio_alert_service import AudioAlertService
 from scheduler import CaptureService, FaceRecognitionService, ActionTrackingService, PoseTrackingService
-from streamer import mjpeg_generator
+from streamer import unified_stream, _draw_face_label
+from camera_streamer import CameraStreamer
 from uploader import SupabaseUploader
 from utils import ensure_dir, setup_logging
 
@@ -47,13 +49,15 @@ def _camera_backend_value(name: str | None) -> int | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_dir(settings.capture_dir)
+    ensure_dir(settings.recordings_dir)
     try:
         camera.open(timeout_s=settings.camera_open_timeout_s)
     except RuntimeError as exc:
         logger.warning("Camera failed to open: %s", exc)
         if settings.camera_required:
             raise
-    detector.start(camera.read)
+    camera_streamer.start()
+    detector.start(camera_streamer.read_latest)
     capture_service.start()
     face_recognition_service.start()
     action_tracking_service.start()
@@ -68,6 +72,7 @@ async def lifespan(app: FastAPI):
         face_recognition_service.stop()
         capture_service.stop()
         detector.stop()
+        camera_streamer.stop()
         camera.close()
 
 
@@ -94,6 +99,25 @@ detector = Detector(
     fallback_models=settings.auto_model_candidates,
     enable_model=settings.enable_detector,
 )
+
+# Single camera owner: captures raw frames at RECORD_FPS and feeds the detector,
+# the smooth /raw-stream, and the recorder — so inference never throttles capture.
+camera_streamer = CameraStreamer(
+    camera,
+    target_fps=settings.record_fps,
+    recordings_dir=settings.recordings_dir,
+)
+
+# Server-side view mode for the single persistent stream, so switching views
+# never reconnects the MJPEG (no "reconnecting" flash).
+_VIEW_MODES = {"inference", "smooth", "smooth_raw"}
+_view_mode = {"mode": "inference"}
+_view_lock = threading.Lock()
+
+
+def _get_view_mode() -> str:
+    with _view_lock:
+        return _view_mode["mode"]
 
 uploader = SupabaseUploader(settings.supabase_url, settings.supabase_key)
 
@@ -201,9 +225,69 @@ async def video_stream():
     if not camera.is_opened():
         raise HTTPException(status_code=503, detail="camera_unavailable")
     return StreamingResponse(
-        mjpeg_generator(detector, fps=settings.stream_fps, face_recognition_service=face_recognition_service),
+        unified_stream(
+            detector,
+            camera_streamer,
+            face_recognition_service,
+            _get_view_mode,
+            inference_fps=settings.stream_fps,
+            smooth_fps=settings.record_fps,
+        ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@app.post("/view-mode")
+async def set_view_mode(mode: str):
+    """Switch what the single /video-stream renders — no client reconnect."""
+    if mode not in _VIEW_MODES:
+        raise HTTPException(status_code=400, detail="invalid_mode")
+    with _view_lock:
+        _view_mode["mode"] = mode
+    return JSONResponse({"ok": True, "mode": mode})
+
+
+@app.get("/view-mode")
+async def get_view_mode():
+    return JSONResponse({"mode": _get_view_mode()})
+
+
+@app.get("/raw-stream")
+async def raw_stream(overlay: bool = False):
+    """Smooth camera feed (~RECORD_FPS). With overlay=1, draws the latest
+    detection boxes + face label on top (smooth motion + boxes that lag slightly)."""
+    if not camera.is_opened():
+        raise HTTPException(status_code=503, detail="camera_unavailable")
+    annotate = None
+    if overlay:
+        ttl = float(getattr(face_recognition_service, "interval_s", 10)) + 5.0
+
+        def annotate(frame):
+            detector.draw_latest_overlays(frame)
+            _draw_face_label(frame, face_recognition_service.get_last(), ttl)
+
+    return StreamingResponse(
+        camera_streamer.mjpeg(fps=settings.record_fps, annotate=annotate),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.post("/recording/start")
+async def recording_start():
+    result = camera_streamer.start_recording()
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result.get("error", "record_failed"))
+    return JSONResponse(result)
+
+
+@app.post("/recording/stop")
+async def recording_stop():
+    return JSONResponse(camera_streamer.stop_recording())
+
+
+@app.get("/recording/status")
+async def recording_status():
+    return JSONResponse(camera_streamer.recording_status())
 
 
 @app.get("/detections")
@@ -254,7 +338,7 @@ async def _load_image(source: str, file: UploadFile | None) -> np.ndarray:
     if source == "live":
         frame = detector.get_latest_frame(annotated=False)
         if frame is None:
-            frame = camera.read()
+            frame = camera_streamer.read_latest()
         if frame is None:
             raise HTTPException(status_code=503, detail="camera_unavailable")
         return frame
@@ -295,6 +379,62 @@ async def face_register(
         raise HTTPException(status_code=422, detail=meta.get("error", "no_face"))
     face_id = face_db.add(name.strip(), embedding)
     return JSONResponse({"ok": True, "id": face_id, "name": name.strip(), "meta": meta})
+
+
+# ---------------------------------------------------------------------------
+# DEMO / BOOTSTRAP ONLY — unauthenticated face-registration page.
+# Lets you seed the first face without passing the Face ID login screen.
+# It posts to the existing (already unauthenticated) /face/register endpoint.
+# SECURITY: anyone who can reach this can create a login identity. Remove this
+# route (or guard it behind a flag) before any real/public deployment.
+# ---------------------------------------------------------------------------
+@app.get("/demo/register", include_in_schema=False)
+async def demo_register_page() -> Response:
+    # Off by default. Enable only on a trusted/local machine via .env:
+    #   ENABLE_DEMO_REGISTER=true
+    # Stays inert (404) on the Pi so the public tunnel exposes no backdoor.
+    if not settings.enable_demo_register:
+        raise HTTPException(status_code=404, detail="not_found")
+    html = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Demo Face Registration</title>
+<style>
+ body{font-family:system-ui,Arial;background:#0d1426;color:#e6edf7;max-width:680px;margin:40px auto;padding:0 16px}
+ input,button{font-size:16px;padding:8px;border-radius:6px;border:1px solid #243049;background:#111a2e;color:#e6edf7}
+ button{cursor:pointer;background:#1d2c4d}
+ img{width:100%;border-radius:8px;border:1px solid #243049;margin:8px 0}
+ .row{margin:12px 0}
+ #out{white-space:pre-wrap;background:#111a2e;padding:12px;border-radius:8px;border:1px solid #243049}
+ a{color:#6ea8ff}
+</style></head><body>
+<h2>Demo Face Registration</h2>
+<p>Bootstrap a face without logging in. Enter a name, then register from the live camera or a photo.</p>
+<img src="/video-stream" alt="live camera">
+<div class="row"><input id="name" placeholder="Name e.g. Shami" size="30"></div>
+<div class="row"><button onclick="reg('live')">Register from Live Camera</button></div>
+<div class="row"><input type="file" id="file" accept="image/*">
+  <button onclick="reg('upload')">Register from Photo</button></div>
+<div class="row"><a href="/faces">View registered faces (JSON)</a></div>
+<pre id="out">Ready.</pre>
+<script>
+async function reg(source){
+  const name=document.getElementById('name').value.trim();
+  const out=document.getElementById('out');
+  if(!name){out.textContent='Enter a name first.';return;}
+  const fd=new FormData(); fd.append('name',name); fd.append('source',source);
+  if(source==='upload'){
+    const f=document.getElementById('file').files[0];
+    if(!f){out.textContent='Choose a photo first.';return;}
+    fd.append('file',f);
+  }
+  out.textContent='Registering...';
+  try{
+    const r=await fetch('/face/register',{method:'POST',body:fd});
+    const d=await r.json();
+    out.textContent=(r.ok?'Registered OK\\n':'Error\\n')+JSON.stringify(d,null,2);
+  }catch(e){ out.textContent='Request failed: '+e; }
+}
+</script></body></html>"""
+    return Response(content=html, media_type="text/html")
 
 
 @app.post("/face/recognize")

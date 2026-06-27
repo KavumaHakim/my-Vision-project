@@ -28,6 +28,9 @@ class Settings:
     camera_open_timeout_s: float
     camera_required: bool
     stream_fps: int
+    record_fps: int
+    recordings_dir: str
+    enable_demo_register: bool
     face_db_path: str
     face_model_name: str
     face_match_threshold: float
@@ -91,6 +94,9 @@ def load_settings() -> Settings:
     camera_open_timeout_s = float(os.getenv("CAMERA_OPEN_TIMEOUT_S", "5.0").strip())
     camera_required = _get_bool("CAMERA_REQUIRED", False)
     stream_fps = int(os.getenv("STREAM_FPS", "10").strip())
+    record_fps = int(os.getenv("RECORD_FPS", "25").strip())
+    recordings_dir = os.getenv("RECORDINGS_DIR", "recordings").strip()
+    enable_demo_register = _get_bool("ENABLE_DEMO_REGISTER", False)
     face_db_path = os.getenv("FACE_DB_PATH", "faces.db").strip()
     face_model_name = os.getenv("FACE_MODEL_NAME", "buffalo_s").strip()
     face_match_threshold = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45").strip())
@@ -150,6 +156,9 @@ def load_settings() -> Settings:
         camera_open_timeout_s=camera_open_timeout_s,
         camera_required=camera_required,
         stream_fps=stream_fps,
+        record_fps=record_fps,
+        recordings_dir=recordings_dir,
+        enable_demo_register=enable_demo_register,
         face_db_path=face_db_path,
         face_model_name=face_model_name,
         face_match_threshold=face_match_threshold,
