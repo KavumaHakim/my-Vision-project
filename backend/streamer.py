@@ -37,7 +37,10 @@ def mjpeg_generator(detector, fps: int, face_recognition_service=None) -> Genera
         if frame is None:
             time.sleep(0.05)
             continue
-        if face_recognition_service is not None:
+        # Only overlay the face box while a person is actually in frame.
+        # The recognition result refreshes every interval_s and is never cleared
+        # on its own, so without this gate the box lingers after the face leaves.
+        if face_recognition_service is not None and detector.has_person():
             _draw_face_label(frame, face_recognition_service.get_last())
         ok, encoded = cv2.imencode(".jpg", frame)
         if not ok:
